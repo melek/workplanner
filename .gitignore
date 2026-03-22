@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
+*~
+
+# Node (if ever needed)
+node_modules/
+
+# State files live in ~/.workplanner/, not here
+__pycache__/
