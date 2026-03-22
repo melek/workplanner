@@ -1,6 +1,6 @@
 {
   "name": "workplanner",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "repository": "https://github.com/melek/workplanner",
   "description": "Daily work-planning and progress-tracking for Claude Code — morning assembly, task transitions, pre-planning, backlog/horizon, EOD consolidation",
   "author": {
