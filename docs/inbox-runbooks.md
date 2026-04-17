@@ -50,10 +50,69 @@ Compute `sweep_since` before running any runbook:
 
 ---
 
-## Runbook 3: Linear Inbox/Notifications
+## Runbook 3: Cross-Source Activity Sweep
+
+**Tool:** organizational context MCP → team-activity provider → `get-member-activity`
+**Config:** `config.integrations.team_activity` (object with `member` field)
+**Source tags:** `linear-inbox`, `slack-ping`, `slack-channel`, `p2`, `github` (mapped from activity origin)
+**Replaces:** Legacy runbooks 3-6 (Linear Inbox, Slack, P2, GitHub) when `config.integrations.team_activity` is configured.
+
+This runbook makes a single API call that returns normalized activity across multiple sources, replacing four separate runbook executions.
+
+### Procedure
+
+1. Load `team-activity` provider via context MCP
+2. Compute date range:
+   - `start_date`: date portion of `sweep_since` (YYYY-MM-DD)
+   - `end_date`: tomorrow's date (end_date is **exclusive** in this API)
+3. Execute `get-member-activity`:
+   ```
+   provider: "team-activity"
+   tool: "get-member-activity"
+   params: {
+     member: config.integrations.team_activity.member,
+     origins: ["github", "linear", "p2", "slack"],
+     start_date: <computed>,
+     end_date: <computed>,
+     limit: 100
+   }
+   ```
+4. Map each activity item to an inbox item:
+
+   | Activity origin | Activity type | Source tag | Notes |
+   |----------------|---------------|-----------|-------|
+   | `linear` | `issue-update`, `project-update` | `linear-inbox` | Set `dedupe_key` from Linear ref in href if present |
+   | `slack` | `msg` | `slack-channel` | Items where user is mentioned → `slack-ping` instead |
+   | `p2` | `post` | `p2` | Skip posts authored by user (outgoing, already aware) |
+   | `p2` | `comment` | `p2` | |
+   | `p2` | `mention` | `slack-ping` | Someone mentioned the user — treat as a ping |
+   | `github` | any | `github` | Set `dedupe_key` to href |
+
+5. For each mapped item, capture: `title` (from `action` text), `url` (from `href`), `source`, `context` (truncated action text)
+6. Set `dedupe_key` to href URL (normalized)
+
+### Coordination channel supplement
+
+Team-activity returns the user's own activity, not incoming channel context. After the activity sweep, still read the coordination channel directly:
+
+- `messages` on `config.coordination_channel` (via `config.slack_channel_ids`) with `oldest` = unix timestamp of `sweep_since`
+- Tag as `source: "slack-channel"`, `sweep_layer: "channel"`
+- This preserves visibility into team discussions the user hasn't participated in
+
+### Fallback
+
+If `config.integrations.team_activity` is not configured, fall back to legacy runbooks 3-6 (defined in appendix below).
+
+---
+
+## Legacy Runbooks 3-6 (fallback)
+
+Used when `config.integrations.team_activity` is not configured. These are the original per-source runbooks.
+
+<details>
+<summary>Runbook 3 (legacy): Linear Inbox/Notifications</summary>
 
 **Tool:** organizational context MCP → linear provider → `inbox`
-**Config:** none (uses authenticated user)
 **Source tag:** `linear-inbox`
 
 1. Load `linear` provider via context MCP
@@ -63,80 +122,47 @@ Compute `sweep_since` before running any runbook:
 5. These surface items the user is *mentioned in* but not necessarily assigned to
 6. Set `dedupe_key` to the Linear issue identifier if present
 
----
+</details>
 
-## Runbook 4: Slack
+<details>
+<summary>Runbook 4 (legacy): Slack</summary>
 
 **Tool:** organizational context MCP → slack provider → `search`, `messages`
 **Config:** `config.slack_channel_ids`, `config.inbox_slack_channels`, `config.inbox_slack_team_handles`, `config.inbox_slack_announcement_authors`, `config.user.slack`
 
-Four layers, each producing inbox items tagged with its layer:
+Four layers:
+- **Layer 1 (slack-ping):** `search` for `@{config.user.slack}` with `days: 1`
+- **Layer 2 (slack-team):** `search` for each handle in `config.inbox_slack_team_handles`
+- **Layer 3 (slack-channel):** `messages` for each channel in `config.inbox_slack_channels` since `sweep_since`
+- **Layer 4 (slack-announcement):** `search` for each author in `config.inbox_slack_announcement_authors`
 
-### Layer 1: Direct pings (highest signal)
+</details>
 
-**Source tag:** `slack-ping`
-
-- `search` query: `@{config.user.slack}` filtered to since `sweep_since` (use `days: 1`)
-- Each result becomes an inbox item with `source: "slack-ping"`, `sweep_layer: "direct-ping"`
-
-### Layer 2: Team/group pings
-
-**Source tag:** `slack-team`
-
-- For each handle in `config.inbox_slack_team_handles` (e.g., `@team-handle`, `@team-name`):
-  - `search` query: `{handle}` with `days: 1`
-- Each result: `source: "slack-team"`, `sweep_layer: "team-ping"`
-
-### Layer 3: Key channel activity
-
-**Source tag:** `slack-channel`
-
-- For each channel in `config.inbox_slack_channels`:
-  - `messages` with `oldest` = unix timestamp of `sweep_since`
-- Capture threads with recent replies that may need attention
-- Each result: `source: "slack-channel"`, `sweep_layer: "channel"`
-
-### Layer 4: Announcement action items
-
-**Source tag:** `slack-announcement`
-
-- For each author in `config.inbox_slack_announcement_authors` (e.g., `matt`):
-  - `search` query: `from:@{author} in:#announcements` with `days: 1`
-- Each result: `source: "slack-announcement"`, `sweep_layer: "announcement"`
-
----
-
-## Runbook 5: Blog/Feed Activity
+<details>
+<summary>Runbook 5 (legacy): Blog/Feed Activity</summary>
 
 **Tool:** organizational context MCP → blog/content provider → `search`
 **Config:** `config.inbox_p2s`
 **Source tag:** `p2`
 
-1. Load blog/content provider via context MCP
-2. For each blog domain in `config.inbox_p2s`:
-   - Provider `search` with `sites` param, `date_from: sweep_since` (date portion), `sort: date_desc`
-3. Capture: new posts since `sweep_since` — title, author, URL, excerpt
-4. Skip posts authored by the user (already aware)
-5. Tag items from announcement-only blogs (per `config.inbox_fyi_domains`) with `source_tier: "fyi"` unless they mention the user or team
-6. All other blog posts: `source: "p2"`. Priority assigned during triage.
+1. For each blog domain in `config.inbox_p2s`, search for posts since `sweep_since`
+2. Skip posts authored by the user
+3. Tag FYI-only blogs with `source_tier: "fyi"`
 
-**Note:** Provider `sites` param may need numeric site IDs or domain strings — verify shape at runtime and adapt.
+</details>
 
----
-
-## Runbook 6: GitHub
+<details>
+<summary>Runbook 6 (legacy): GitHub</summary>
 
 **Tool:** organizational context MCP → github provider → `search-pull-requests`
-**Config:** `config.inbox_github_orgs` (default: `[]`)
+**Config:** `config.inbox_github_orgs`
 **Source tag:** `github`
 
-1. Load `github` provider via context MCP
-2. Search PRs where user is requested reviewer: `review-requested:{config.user.github} state:open` scoped to configured orgs
-3. Search PRs mentioning user: `mentions:{config.user.github} state:open` scoped to configured orgs
-4. Capture: PR title, repo, URL, author, state
-5. Tag as `source: "github"`. Priority assigned during triage.
-6. Skip repos in `config.inbox_github_skip_orgs` entirely
-7. Set `dedupe_key` to PR URL
+1. Search PRs where user is requested reviewer
+2. Search PRs mentioning user
+3. Set `dedupe_key` to PR URL
+
+</details>
 
 ---
 

@@ -134,6 +134,8 @@ Created during first-run setup. Persists across sessions.
 | `integrations.focus_skill` | `string \| null` | no | Skill to invoke for focus issue loading (e.g. `"/focus"`). Null = query Linear directly. |
 | `integrations.context_mcp` | `boolean` | no | Whether an organizational context MCP server is available. Default: `true`. |
 | `integrations.linear_mcp` | `boolean` | no | Whether the Linear MCP server is available. Default: `true`. |
+| `integrations.team_activity` | `object \| null` | no | If set, enables the cross-source activity sweep (Runbook 3) which replaces legacy runbooks 3-6. Requires the `team-activity` provider in the organizational context MCP. |
+| `integrations.team_activity.member` | `string` | yes (if parent set) | The user's wpcom username for the `get-member-activity` call (e.g. `"lioneldaniel"`). |
 | `inbox_slack_channels` | `object` | no | Map of channel names to Slack IDs for inbox sweep. E.g. `{"team-general": "C06NQQMUMB3", "project-chat": "<id>"}`. |
 | `inbox_slack_team_handles` | `array` of `string` | no | Team handles to search for pings. E.g. `["@team-handle", "@team-name"]`. |
 | `inbox_slack_announcement_authors` | `array` of `string` | no | Slack usernames whose announcements to monitor. E.g. `["matt"]`. |
