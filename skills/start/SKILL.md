@@ -204,14 +204,24 @@ Confirm: "Config saved. Run `/workplanner:start` again to begin your day."
 Triggered when `current-session.json` exists but `date` ≠ today.
 
 1. Read the stale session
-2. If `eod_posted: false` — offer a **retroactive EOD** before proceeding:
+2. If `eod_posted: false` — resolve the missed EOD before proceeding. Branch on `config.handoffs`:
+
+   **(a) If `config.handoffs.dir` is set** (local-handoff mode — use this when the EOD artifact is a file rather than an external post):
+   - Target path: `{config.handoffs.dir}/{stale_session.date}.md` (filename resolved via `config.handoffs.filename_pattern`, default `{date}.md`).
+   - If the file is **missing**: draft a handoff from the stale session (done / deferred / blocked summary, notes, open threads, any scope decisions captured in task notes) and write it atomically. No prompt — the file IS the EOD artifact. Augment with Linear `completedAt` / recent-updates for the session's date window and any relevant repo state (new directories, uncommitted files) when the session JSON alone is thin. Log: "Backfilled handoff: {path}".
+   - If the file is **present**: log "Handoff already written for {date}" and continue.
+   - **If `config.handoffs.carryover_from_handoff` is true** (default when `handoffs.dir` is set): the handoff file is authoritative for carryover framing. Read it and let its "Deferred" / "Deferred → tomorrow" section override stale-session task titles and scope. This prevents stale framings from persisting across multiple missed EODs — a scope pivot captured in the handoff file propagates forward even if the session JSON didn't update.
+
+   **(b) Otherwise** (external-posting mode, e.g., Linear):
    - Show yesterday's task summary: done count, deferred/blocked count, total
    - Draft a Linear update for yesterday (same format as `/eod` Step 2)
    - Ask: "Post yesterday's update to your weekly check-in? [Post / Skip]"
    - If "Post": use Linear MCP `save_comment` on yesterday's `personal_sub_issue`. Note success.
    - If "Skip": note "Skipped retroactive EOD" and continue.
-   - This prevents the recurring pattern of missing daily updates when deep work runs past EOD.
-3. Extract `deferred` and `blocked` tasks as carryover candidates
+
+   Why this exists: missed EODs otherwise cause stale task framings to carry forward unchanged for multiple days. The handoff file — when used — captures scope pivots, decisions, and context that session JSON alone cannot reconstruct the morning after.
+
+3. Extract `deferred` and `blocked` tasks as carryover candidates (from the handoff file when in local-handoff mode, otherwise from session JSON)
 4. Archive: move session to `~/.workplanner/profiles/active/session/agendas/archive/{date}.json`
 5. Archive the agenda markdown too if it exists
 6. Compute `sweep_since` from the stale session's `eod_target` on its `date`
