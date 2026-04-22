@@ -84,10 +84,6 @@ Located at `~/.workplanner/profiles/<name>/config.json`. Each profile has its ow
     "eng-coordination": "C01EXAMPLE1",
     "platform-team": "C02EXAMPLE2"
   },
-  "inbox_slack_channels": {
-    "eng-coordination": "C01EXAMPLE1",
-    "platform-team": "C02EXAMPLE2"
-  },
   "inbox_slack_team_handles": ["@eng-team", "@platform-oncall"],
   "inbox_slack_announcement_authors": ["ceo"],
   "inbox_p2s": ["team-blog.example.com"],
