@@ -18,6 +18,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/post-tool-use-hook.sh",
+            "timeout": 3,
+            "async": false
+          }
+        ]
+      }
     ]
   }
 }
