@@ -859,8 +859,13 @@ STATUS_GLYPH = {
 
 
 def _task_record(idx, task):
-    """Compact dict representation of a task for JSON emission."""
-    return {
+    """Compact dict representation of a task for JSON emission.
+
+    ``defer_reason`` is included only when present so non-deferred tasks
+    don't carry a null field (keeps the common case small). This matches
+    how the text-mode one-liner only appends the reason when set.
+    """
+    record = {
         "tid": tid(idx),
         "index": idx,
         "uid": task.get("uid"),
@@ -878,6 +883,10 @@ def _task_record(idx, task):
         "deferral_count": task.get("deferral_count", 0),
         "parent": task.get("parent"),
     }
+    defer_reason = task.get("defer_reason")
+    if defer_reason:
+        record["defer_reason"] = defer_reason
+    return record
 
 
 def session_records(session):
@@ -1160,20 +1169,41 @@ def cmd_defer(args):
                  .get("deferrals", {})
                  .get("reckoning_threshold", 3))
     if count >= threshold:
-        print(f"\u26a0 {tid(idx)} \"{task['title']}\" has been deferred {count} times.")
-        # Surface prior context so the reckoning decision has the "why" in hand.
-        if reason:
-            print(f"  Reason (this defer): {reason}")
-        elif prior_reason:
-            print(f"  Last reason: {prior_reason}")
-        print(f"  What's actually going on?")
-        print(f"  [b] Break it down into smaller tasks")
-        print(f"  [d] Delegate \u2014 reassign or ask for help")
-        print(f"  [x] Drop it \u2014 it's not going to happen")
-        print(f"  [t] Timebox \u2014 schedule a dedicated block (sends to backlog with target date)")
-        print(f"  [k] Keep deferring \u2014 I'll get to it")
-        # Save the incremented count (and reason, if given) but don't change status yet.
+        # Save the incremented count (and reason, if given) *before* emitting
+        # so the payload is consistent with what just landed on disk. Status
+        # is intentionally unchanged: the caller decides via `wpl reckon`.
         save_session(session, undo=False)
+
+        choices = ["b", "d", "x", "t", "k"]
+        prompt_short = "Break down / Delegate / Drop / Timebox / Keep"
+
+        if OUTPUT_FORMAT == "json":
+            # Structured payload for programmatic callers. Exit 2 still
+            # signals "reckoning needed"; the caller now has the full task
+            # record (including defer_reason and deferral_count) to surface
+            # the decision. Fixes the Stream A / Stream B contract gap.
+            payload = {
+                "result": "reckoning-required",
+                "action": "defer",
+                "task": _task_record(idx, task),
+                "threshold": threshold,
+                "choices": choices,
+                "prompt": prompt_short,
+            }
+            print(json.dumps(payload))
+        else:
+            print(f"\u26a0 {tid(idx)} \"{task['title']}\" has been deferred {count} times.")
+            # Surface prior context so the reckoning decision has the "why" in hand.
+            if reason:
+                print(f"  Reason (this defer): {reason}")
+            elif prior_reason:
+                print(f"  Last reason: {prior_reason}")
+            print(f"  What's actually going on?")
+            print(f"  [b] Break it down into smaller tasks")
+            print(f"  [d] Delegate \u2014 reassign or ask for help")
+            print(f"  [x] Drop it \u2014 it's not going to happen")
+            print(f"  [t] Timebox \u2014 schedule a dedicated block (sends to backlog with target date)")
+            print(f"  [k] Keep deferring \u2014 I'll get to it")
         sys.exit(2)  # Signal to calling skill that reckoning is needed
 
     was_current = (idx == session.get("current_task_index"))
