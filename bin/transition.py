@@ -832,13 +832,34 @@ def status_line(session, config=None):
             f" | ~{fmt_duration(remaining)} left"
             f" | EOD: {eod}"
         )
-    else:
+    # No in_progress task. Distinguish "all done" from "nothing active but
+    # pending remain" so the header doesn't lie after a switch->done
+    # sequence that didn't auto-advance. "All tasks complete" fires only
+    # when every task landed in `done`; anything else (pending, blocked,
+    # deferred left over) gets a "No active task" variant with the
+    # residual pending count.
+    pending_count = sum(1 for t in tasks if t.get("status") == "pending")
+    if total_count and done_count == total_count:
         return (
             f"All tasks complete"
             f" | {date_str}{tz_tag}"
             f" | Done: {done_count}/{total_count}"
             f" | EOD: {eod}"
         )
+    if pending_count:
+        header = f"No active task — {pending_count} pending"
+    elif total_count:
+        # Only blocked/deferred tasks left (nothing pending, not all done).
+        header = "No active task"
+    else:
+        header = "No tasks"
+    return (
+        f"{header}"
+        f" | {date_str}{tz_tag}"
+        f" | Done: {done_count}/{total_count}"
+        f" | ~{fmt_duration(remaining)} left"
+        f" | EOD: {eod}"
+    )
 
 
 # ── Output format / shared formatter ─────────────────────────────────
