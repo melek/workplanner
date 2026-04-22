@@ -4,6 +4,8 @@ Deterministic sweep procedures for each inbox source. Executed sequentially duri
 
 **Procedure vs Policy:** Runbooks define *what to collect* and *how to tag it* (procedure). Priority assignment and estimate defaults are applied during the triage step using `config.triage.source_priority` and `config.triage.estimates` (policy). See `docs/triage-framework.md` and `docs/state-schema.md` for the config schema.
 
+**Intent, not tool names.** Runbooks describe what to collect in integration-agnostic terms. They do not name specific MCP providers, tool methods, scopes, or API shapes — those vary across users and change over time. Let the assistant map each step's intent onto whichever integration tools the user has available. Config field names (e.g. `config.inbox_slack_channels`) are user-declared shape and are preserved as-is.
+
 ---
 
 ## Time Horizon
@@ -18,7 +20,7 @@ Compute `sweep_since` before running any runbook:
 
 ## Runbook 1: Digest
 
-**Tool:** Skill tool → `config.integrations.digest_skill` (or lightweight fallback)
+**Intent:** Obtain or generate today's digest of cross-source activity and parse its action-item sections.
 **Config:** `config.digest_dir`, `config.integrations.digest_skill`
 **Source tag:** `digest`
 
@@ -34,13 +36,13 @@ Compute `sweep_since` before running any runbook:
 
 ---
 
-## Runbook 2: Linear Issues
+## Runbook 2: Project-Management Issues
 
-**Tool:** Linear MCP → `list_issues`
-**Config:** `config.linear_user_id`, `config.linear_teams`
+**Intent:** Surface issues assigned to the user in active states across the teams/projects they participate in.
+**Config:** `config.linear_user_id`, `config.linear_teams` (rename to user's PM integration shape if different)
 **Source tag:** `linear`
 
-1. Query assigned issues in active states (`In Progress`, `Todo`, `In Review`) across each team in `config.linear_teams`
+1. List assigned issues in active states (equivalent of `In Progress`, `Todo`, `In Review`) across each team in `config.linear_teams`
 2. For each issue, capture:
    - Title, identifier, URL, team, state, priority (1-4), due date
    - Store `linear_priority` as raw value (1-4). Priority tier assigned during triage from `config.triage.source_priority` keys `linear-p1` through `linear-p4`.
@@ -52,31 +54,18 @@ Compute `sweep_since` before running any runbook:
 
 ## Runbook 3: Cross-Source Activity Sweep
 
-**Tool:** organizational context MCP → team-activity provider → `get-member-activity`
+**Intent:** When an aggregated activity feed is available (one call that returns normalized activity across PM, messaging, code-review, and internal-blog sources), prefer it over running legacy runbooks 3-6 separately.
 **Config:** `config.integrations.team_activity` (object with `member` field)
 **Source tags:** `linear-inbox`, `slack-ping`, `slack-channel`, `p2`, `github` (mapped from activity origin)
-**Replaces:** Legacy runbooks 3-6 (Linear Inbox, Slack, P2, GitHub) when `config.integrations.team_activity` is configured.
-
-This runbook makes a single API call that returns normalized activity across multiple sources, replacing four separate runbook executions.
+**Replaces:** Legacy runbooks 3-6 (PM inbox, messaging, internal blogs, code review) when `config.integrations.team_activity` is configured.
 
 ### Procedure
 
-1. Load `team-activity` provider via context MCP
+1. Locate the aggregated-activity provider the user has declared.
 2. Compute date range:
    - `start_date`: date portion of `sweep_since` (YYYY-MM-DD)
    - `end_date`: tomorrow's date (end_date is **exclusive** in this API)
-3. Execute `get-member-activity`:
-   ```
-   provider: "team-activity"
-   tool: "get-member-activity"
-   params: {
-     member: config.integrations.team_activity.member,
-     origins: ["github", "linear", "p2", "slack"],
-     start_date: <computed>,
-     end_date: <computed>,
-     limit: 100
-   }
-   ```
+3. Fetch activity for `config.integrations.team_activity.member` across the origins the user's integration supports (typically `github`, `linear`, `p2`, `slack`), limited to the computed date range.
 4. Map each activity item to an inbox item:
 
    | Activity origin | Activity type | Source tag | Notes |
@@ -93,9 +82,9 @@ This runbook makes a single API call that returns normalized activity across mul
 
 ### Coordination channel supplement
 
-Team-activity returns the user's own activity, not incoming channel context. After the activity sweep, still read the coordination channel directly:
+The aggregated activity feed typically returns the user's own activity, not incoming channel context. After the activity sweep, still read the coordination channel directly:
 
-- `messages` on `config.coordination_channel` (via `config.slack_channel_ids`) with `oldest` = unix timestamp of `sweep_since`
+- List recent messages in `config.coordination_channel` (via `config.slack_channel_ids`) since `sweep_since`
 - Tag as `source: "slack-channel"`, `sweep_layer: "channel"`
 - This preserves visibility into team discussions the user hasn't participated in
 
@@ -110,79 +99,78 @@ If `config.integrations.team_activity` is not configured, fall back to legacy ru
 Used when `config.integrations.team_activity` is not configured. These are the original per-source runbooks.
 
 <details>
-<summary>Runbook 3 (legacy): Linear Inbox/Notifications</summary>
+<summary>Runbook 3 (legacy): PM Inbox / Notifications</summary>
 
-**Tool:** organizational context MCP → linear provider → `inbox`
+**Intent:** Surface items the user is *mentioned in* or *notified about* in the project-management integration, even when not assigned.
 **Source tag:** `linear-inbox`
 
-1. Load `linear` provider via context MCP
-2. Execute `inbox` tool (limit: 50)
-3. Filter to items since `sweep_since`
-4. Capture: issue assignments, comment mentions, status changes
-5. These surface items the user is *mentioned in* but not necessarily assigned to
-6. Set `dedupe_key` to the Linear issue identifier if present
+1. Fetch the user's PM notifications/inbox (limit ~50)
+2. Filter to items since `sweep_since`
+3. Capture: issue assignments, comment mentions, status changes
+4. Set `dedupe_key` to the issue identifier if present
 
 </details>
 
 <details>
-<summary>Runbook 4 (legacy): Slack</summary>
+<summary>Runbook 4 (legacy): Messaging</summary>
 
-**Tool:** organizational context MCP → slack provider → `search`, `messages`
+**Intent:** Surface incoming messaging activity the user needs to respond to, across four conceptual layers.
 **Config:** `config.slack_channel_ids`, `config.inbox_slack_channels`, `config.inbox_slack_team_handles`, `config.inbox_slack_announcement_authors`, `config.user.slack`
 
-Four layers:
-- **Layer 1 (slack-ping):** `search` for `@{config.user.slack}` with `days: 1`
-- **Layer 2 (slack-team):** `search` for each handle in `config.inbox_slack_team_handles`
-- **Layer 3 (slack-channel):** `messages` for each channel in `config.inbox_slack_channels` since `sweep_since`
-- **Layer 4 (slack-announcement):** `search` for each author in `config.inbox_slack_announcement_authors`
+Four layers — use whichever methods the user's messaging integration supports. Prefer user-scoped scans (the user's own recent activity and direct pings) over broad searches when the integration's permissions allow both:
+
+- **Layer 1 (ping):** Find messages directed at `config.user.slack` since `sweep_since`
+- **Layer 2 (team-ping):** Find mentions of each handle in `config.inbox_slack_team_handles`
+- **Layer 3 (channel):** List recent messages in each channel in `config.inbox_slack_channels` since `sweep_since`
+- **Layer 4 (announcement):** Find recent posts from each author in `config.inbox_slack_announcement_authors`
 
 </details>
 
 <details>
-<summary>Runbook 5 (legacy): Blog/Feed Activity</summary>
+<summary>Runbook 5 (legacy): Internal Blogs / Feeds</summary>
 
-**Tool:** organizational context MCP → blog/content provider → `search`
+**Intent:** Surface recent posts on internal blogs/feeds the user follows, excluding ones they authored themselves.
 **Config:** `config.inbox_p2s`
 **Source tag:** `p2`
 
-1. For each blog domain in `config.inbox_p2s`, search for posts since `sweep_since`
+1. For each feed/domain in `config.inbox_p2s`, find posts since `sweep_since`
 2. Skip posts authored by the user
-3. Tag FYI-only blogs with `source_tier: "fyi"`
+3. Tag FYI-only feeds with `source_tier: "fyi"`
 
 </details>
 
 <details>
-<summary>Runbook 6 (legacy): GitHub</summary>
+<summary>Runbook 6 (legacy): Code Review</summary>
 
-**Tool:** organizational context MCP → github provider → `search-pull-requests`
+**Intent:** Surface code-review activity requesting the user's attention.
 **Config:** `config.inbox_github_orgs`
 **Source tag:** `github`
 
-1. Search PRs where user is requested reviewer
-2. Search PRs mentioning user
-3. Set `dedupe_key` to PR URL
+1. Find pull requests where the user is a requested reviewer
+2. Find pull requests that mention the user
+3. Set `dedupe_key` to the PR URL
 
 </details>
 
 ---
 
-## Runbook 7: Gmail
+## Runbook 7: Email
 
-**Tool:** Gmail MCP → `gmail_search_messages`
+**Intent:** Surface recent unread non-promotional email that may contain actionable items.
 **Config:** `config.inbox_gmail_enabled` (default: `true`)
 **Source tag:** `gmail`
 
 1. If `config.inbox_gmail_enabled` is false → skip
-2. Search: `is:unread newer_than:1d -category:promotions -category:social -category:updates`
+2. Scan for unread messages in the last day, excluding promotional/social/updates categories (use whatever filter syntax the user's email integration supports)
 3. If 0 results → done (expected most days)
 4. If results → capture subject, sender, snippet as inbox items with `source: "gmail"`
 5. If sender domain matches any entry in `config.inbox_gmail_priority_domains`, set `source: "gmail-priority"`. Priority assigned during triage.
 
 ---
 
-## Runbook 8: Google Calendar
+## Runbook 8: Calendar
 
-**Tool:** Google Calendar MCP → `gcal_list_events`
+**Intent:** List today's calendar events so protected blocks can be inserted into the agenda.
 **Config:** `config.inbox_calendar_enabled` (default: `true`)
 **Source tag:** `calendar`
 

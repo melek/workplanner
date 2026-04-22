@@ -2,7 +2,7 @@
 name: start
 description: "Start or resume the workday. Handles first-run setup, stale session recovery, morning assembly (inbox sweep → focus → agenda build → finalize), and status checks for active sessions. The two daily bookends — start opens the day, eod closes it."
 argument-hint: ""
-allowed-tools: Read, Write, Bash, AskUserQuestion, Agent, ToolSearch, Skill, mcp__linear-server__list_issues, mcp__linear-server__get_issue, mcp__linear-server__list_cycles, mcp__linear-server__list_comments, mcp__claude_ai_Gmail__gmail_search_messages, mcp__claude_ai_Gmail__gmail_read_message, mcp__claude_ai_Google_Calendar__gcal_list_events
+allowed-tools: Read, Write, Bash, AskUserQuestion, Agent, ToolSearch, Skill
 ---
 
 # Start
@@ -65,31 +65,19 @@ If not in tmux, the wrappers are still created (useful for cross-session coordin
 
 Run once at the start of Morning Assembly (skip on resume if checkpoint >= initialized).
 
-### Load deferred tools (parallel)
+The pre-flight verifies the integrations the user's profile actually uses. Do **not** hardcode a preload list of tools or a fixed sequence of provider-specific calls — those assume a particular integration shape that will not match every user. Derive the check surface from the profile's declared inbox sources and integrations.
 
-ToolSearch: `select:mcp__linear-server__list_issues,mcp__linear-server__get_issue,mcp__linear-server__list_cycles,mcp__linear-server__list_comments,mcp__claude_ai_Gmail__gmail_search_messages,mcp__claude_ai_Gmail__gmail_read_message,mcp__claude_ai_Google_Calendar__gcal_list_events`
+### Procedure
 
-### Connectivity (sequential)
-
-1. **Linear MCP** — `list_issues` with `limit: 1`
-   - OK → "Linear: ✓"
-   - Fail → warn "Linear MCP needs re-auth. Focus will use digest fallback."
-     Setup: `claude mcp add --transport sse --scope user linear-server https://mcp.linear.app/sse`
-2. **Context MCP (Slack)** — load the `slack` provider via your organizational context MCP
-   - OK → "Slack: ✓"
-   - Fail → warn "Slack unavailable. Slack sweep will be skipped."
-3. **Gmail MCP** — `gmail_search_messages` with `query: "is:unread newer_than:1d"`, `maxResults: 1`
-   - OK → "Gmail: ✓"
-   - Fail → "Gmail: ✗ (skipping)"
-4. **Google Calendar MCP** — `gcal_list_events` for today
-   - OK → "Calendar: ✓"
-   - Fail → "Calendar: ✗ (will ask manually)"
+1. Inspect the active profile's `config.json` to enumerate the integrations the morning assembly will touch (e.g. project-management, messaging, email, calendar, organizational-context). Each declared integration corresponds to one or more runbooks in `docs/inbox-runbooks.md`.
+2. For each integration, load the tool schemas needed to exercise it (via `ToolSearch` with whatever selectors match the user's available MCPs), then perform a minimal round-trip that exercises auth and basic reachability — the cheapest call available that proves the integration is usable.
+3. Record the result as `✓` or `✗ (reason)` per integration. Failures are non-blocking; runbooks already handle graceful degradation.
 
 ### Report
 
-One-line status: `MCP: Linear ✓ | Slack ✓ | Gmail ✓ | Calendar ✓` (or ✗ with reason)
+One-line status keyed by integration name, e.g. `Integrations: project-mgmt ✓ | messaging ✓ | email ✓ | calendar ✓` (or ✗ with reason). Use the labels the user's config declares.
 
-Proceed to Routing. Individual runbooks already handle graceful degradation.
+Proceed to Routing.
 
 ## Routing
 
@@ -125,13 +113,7 @@ Triggered when `~/.workplanner/user.json` does not exist.
 
 Before asking any questions, silently inventory what's available:
 
-1. **MCP availability:** Test each connected MCP server with a minimal query:
-   - Linear MCP: `list_issues` with `limit: 1`
-   - Gmail MCP: `gmail_search_messages` with `query: "is:unread"`, `maxResults: 1`
-   - Google Calendar MCP: `gcal_list_events` for today
-   - Any organizational context MCP: attempt to load a provider
-
-   Report results: "I can see [Linear, Gmail, Calendar]. I don't have access to [Slack]."
+1. **Integration availability:** For each connected MCP server, perform the cheapest call that proves auth and basic reachability — a minimal list or read on the most common resource the server exposes. Report back the integrations you can see and the ones you cannot. Do not assume any particular MCP shape; describe what's available in the user's terms (e.g. "I can see project management, email, calendar; I don't see messaging").
 
 2. **Environment heuristics (best-effort, silent on failure):**
    - `.github/` in cwd → pre-fill `github_username` from `git config user.name`

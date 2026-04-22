@@ -2,7 +2,7 @@
 name: pickup
 description: "Pick up an workplanner task in this session. Reads task context from the session, marks it in_progress, and starts planning the work. Use when opening a new Claude session to work on a specific task."
 argument-hint: "[task — t3, index, or search term]"
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, Agent, ToolSearch, mcp__linear-server__get_issue, mcp__linear-server__list_comments
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, Agent, ToolSearch
 ---
 
 # Pickup

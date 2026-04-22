@@ -1,8 +1,8 @@
 ---
 name: eod
-description: "End-of-day consolidation. Finalizes open tasks, drafts a Linear check-in update and Slack handoff, and closes the session. Deferred/blocked tasks carry over tomorrow. The two daily bookends — start opens the day, eod closes it."
+description: "End-of-day consolidation. Finalizes open tasks, drafts a check-in update for the user's project-management integration and a handoff message for their messaging integration, and closes the session. Deferred/blocked tasks carry over tomorrow. The two daily bookends — start opens the day, eod closes it."
 argument-hint: ""
-allowed-tools: Read, Write, Bash, AskUserQuestion, ToolSearch, mcp__linear-server__save_comment, mcp__linear-server__list_comments
+allowed-tools: Read, Write, Bash, AskUserQuestion, ToolSearch
 ---
 
 # EOD Consolidation

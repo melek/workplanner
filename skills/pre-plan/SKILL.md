@@ -2,7 +2,7 @@
 name: pre-plan
 description: "Generate task briefings and surface workplan revisions. Researches tasks in parallel, writes briefings to the resolved profile's briefings/{date}/ directory, then presents strategic revisions (decomposition, estimate corrections, duplicates, completed tasks) as a batch for cross-task awareness."
 argument-hint: "[all | t3 | search term] — defaults to all pending tasks"
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, ToolSearch, AskUserQuestion, mcp__linear-server__get_issue, mcp__linear-server__list_comments
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, ToolSearch, AskUserQuestion
 ---
 
 # Pre-Plan
