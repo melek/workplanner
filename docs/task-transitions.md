@@ -26,14 +26,25 @@ The `wpl` wrapper lives at `~/.workplanner/bin/wpl` and forwards to `bin/transit
 
 | Command | Args | Effect |
 |---------|------|--------|
-| `done` | — | Mark current task done (records actual_min), advance to next pending |
+| `done` | `[--as "<title>"]` | Mark current task done (records actual_min), advance to next pending |
 | `blocked` | `[reason...]` | Mark current task blocked, advance to next pending |
 | `defer` | — | Mark current task deferred, advance to next pending |
 | `add` | `<title> [flags]` | Add a new task (see flags below) |
 | `move` | `<source> --to <dest>` | Reorder a task to a new position |
 | `switch` | `<target> [--no-pause]` | Switch focus to a different task |
 | `dispatch` | `<target>` | Mark a task as dispatched to another session |
-| `status` | — | Print one-line status summary |
+| `remove` | `<target> [--as "<title>"]` | Remove a task entirely |
+| `status` | — | Print one-line status summary and full compact task list |
+
+### Global flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format {text,json}` | `text` | Output format. Text is glyph-friendly and LLM- and human-readable. JSON emits a structured response suitable for programmatic parsing by skills that want machine-parsable output. |
+
+### `--as "<title>"` echo check
+
+`done` and `remove` accept an optional `--as "<title>"` argument. When present, the CLI compares the echoed title to the target task's actual title (case-insensitive, whitespace-tolerant). On mismatch, the mutation is refused with an error naming the actual title and UID, and the process exits non-zero. This is a cheap sanity check that catches "wrong-task" mistakes from stale display IDs, and self-documents the LLM's intent in the session transcript. Absent `--as`, behavior is unchanged.
 
 ### `add` flags
 
@@ -55,9 +66,15 @@ All mutating commands:
 3. Apply mutation
 4. Atomic write (tmp file → mv)
 5. Re-render dashboard via `render_dashboard.py`
-6. Print one-line confirmation to stdout
+6. Print one-line confirmation *plus the full compact task list* to stdout (text mode), or a structured JSON response (JSON mode)
 
 Exit code 0 on success, 1 on precondition failure (error to stderr).
+
+### Post-mutation feedback loop
+
+Every mutating command emits the full compact task list after its one-line confirmation. This keeps the LLM's model of session state synchronized with engine state across turn boundaries — without the LLM having to call `wpl status` between every mutation. The list includes UIDs (stable across mutations) alongside display IDs (`tN`, unstable; recomputed on every mutation). When addressing tasks, prefer UIDs.
+
+A `PostToolUse` plugin hook (`bin/post-tool-use-hook.sh`) provides a secondary feedback channel: after any Bash call whose command starts with `wpl`, the hook injects a compact session-state summary into the next turn's context. Both channels reinforce each other; neither is redundant.
 
 ## Transition Effects
 

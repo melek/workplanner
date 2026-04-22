@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-WPL_ROOT = Path.home() / ".workplanner"
+WPL_ROOT = Path(os.environ["WPL_ROOT"]) if os.environ.get("WPL_ROOT") else Path.home() / ".workplanner"
 
 
 def resolve_profile_root():
@@ -230,8 +230,9 @@ def render():
 
 
 def fail(msg):
-    print(f"error: {msg}", file=sys.stderr)
-    sys.exit(1)
+    # Route through emit_error so JSON mode emits structured errors.
+    # Falls back to the historical "error: ..." line in text mode.
+    emit_error(msg)
 
 
 def now_hhmm():
@@ -449,6 +450,216 @@ def status_line(session, config=None):
         )
 
 
+# ── Output format / shared formatter ─────────────────────────────────
+
+# Set by main() from the top-level --format argument. Commands read it
+# to decide between glyph-friendly text output and a structured JSON
+# response. Default "text" preserves backward-compatible behaviour.
+OUTPUT_FORMAT = "text"
+
+
+STATUS_GLYPH = {
+    "in_progress": "▶",
+    "done":        "✓",
+    "blocked":     "⚠",
+    "deferred":    "↷",
+    "pending":     " ",
+}
+
+
+def _task_record(idx, task):
+    """Compact dict representation of a task for JSON emission."""
+    return {
+        "tid": tid(idx),
+        "index": idx,
+        "uid": task.get("uid"),
+        "title": task.get("title"),
+        "status": task.get("status"),
+        "estimate_min": task.get("estimate_min"),
+        "actual_min": task.get("actual_min"),
+        "source": task.get("source"),
+        "ref": task.get("ref"),
+        "url": task.get("url"),
+        "notes": task.get("notes"),
+        "started_at": task.get("started_at"),
+        "finished_at": task.get("finished_at"),
+        "dispatched": bool(task.get("dispatched")),
+        "deferral_count": task.get("deferral_count", 0),
+        "parent": task.get("parent"),
+    }
+
+
+def session_records(session):
+    """Return per-task records list for JSON output."""
+    tasks = session.get("tasks", [])
+    return [_task_record(i, t) for i, t in enumerate(tasks)]
+
+
+def format_task_list(session, config=None):
+    """Return a list of lines representing the full compact task list.
+
+    Format per Stream A (Q1/Q8): every task on its own line with glyph,
+    display ID, UID, title, estimate/actual, and source/ref. Footer line
+    matches the existing remaining_summary/status_line shape.
+
+    Shared by every mutating command so the stdout channel carries the
+    full post-mutation state. Do not duplicate formatting elsewhere.
+    """
+    tasks = session.get("tasks", [])
+    cur_idx = session.get("current_task_index")
+    lines = []
+
+    for i, t in enumerate(tasks):
+        status = t.get("status", "pending")
+        if i == cur_idx and status == "in_progress":
+            glyph = STATUS_GLYPH["in_progress"]
+        else:
+            glyph = STATUS_GLYPH.get(status, " ")
+
+        uid = (t.get("uid") or "?")[:8]
+        title = t.get("title") or "?"
+
+        est = t.get("estimate_min")
+        actual = t.get("actual_min")
+        if status == "done":
+            if actual is not None and est:
+                time_str = f"({actual}m/{est}m)"
+            elif actual is not None:
+                time_str = f"({actual}m)"
+            elif est:
+                time_str = f"(~{est}m)"
+            else:
+                time_str = ""
+        else:
+            time_str = f"(~{est}m)" if est else ""
+
+        ref = t.get("ref")
+        source = t.get("source")
+        if ref:
+            src_str = f" [{ref}]"
+        elif source and source != "manual":
+            src_str = f" [{source}]"
+        else:
+            src_str = ""
+
+        dispatch_str = " (dispatched)" if t.get("dispatched") else ""
+        parent = t.get("parent")
+        parent_str = f" (child of {tid(parent)})" if parent is not None else ""
+
+        line = f"  [{glyph}] {tid(i)}  {uid}  {title}  {time_str}{dispatch_str}{parent_str}{src_str}".rstrip()
+        lines.append(line)
+
+    done_count = sum(1 for t in tasks if t.get("status") == "done")
+    total_count = len(tasks)
+    remaining = sum(
+        t.get("estimate_min", 0) or 0
+        for t in tasks
+        if t.get("status") in ("pending", "in_progress", "blocked")
+    )
+    eod = session.get("eod_target", "18:00")
+    footer = (
+        f"  Done: {done_count}/{total_count}"
+        f" | ~{fmt_duration(remaining)} left"
+        f" | EOD: {eod}"
+    )
+    if not lines:
+        lines.append("  (no tasks)")
+    lines.append(footer)
+    return lines
+
+
+def print_task_list(session, config=None):
+    """Print the full compact task list to stdout."""
+    for line in format_task_list(session, config):
+        print(line)
+
+
+def _status_payload(session, config=None):
+    """Build the structured status payload used by --format json."""
+    tasks = session.get("tasks", [])
+    idx, task = current_task(session)
+    eod = session.get("eod_target", "18:00")
+    today = local_today(config)
+    tz_name = (config or {}).get("timezone", "")
+
+    done_count = sum(1 for t in tasks if t.get("status") == "done")
+    total_count = len(tasks)
+    remaining = sum(
+        t.get("estimate_min", 0) or 0
+        for t in tasks
+        if t.get("status") in ("pending", "in_progress", "blocked")
+    )
+
+    def records_by_status(want):
+        return [_task_record(i, t) for i, t in enumerate(tasks)
+                if t.get("status") == want]
+
+    current = _task_record(idx, task) if task else None
+
+    return {
+        "date": today.isoformat(),
+        "timezone": tz_name,
+        "eod_target": eod,
+        "checkpoint": session.get("checkpoint"),
+        "current_task": current,
+        "current_task_index": idx,
+        "tasks": session_records(session),
+        "pending": records_by_status("pending"),
+        "done": records_by_status("done"),
+        "blocked": records_by_status("blocked"),
+        "deferred": records_by_status("deferred"),
+        "in_progress": records_by_status("in_progress"),
+        "counts": {
+            "done": done_count,
+            "total": total_count,
+            "remaining_min": remaining,
+        },
+    }
+
+
+def emit_mutation(action, session, affected=None, config=None, human_line=None):
+    """Emit a mutation's stdout — text (one-liner + full list) or JSON.
+
+    `action` is the wpl subcommand that ran. `affected` is a list of
+    (index, task) tuples whose identity should be echoed in the JSON
+    response. `human_line` is the one-line confirmation printed first
+    in text mode.
+    """
+    if OUTPUT_FORMAT == "json":
+        payload = {
+            "result": "ok",
+            "action": action,
+            "affected": [
+                {"uid": t.get("uid"), "tid": tid(i), "title": t.get("title")}
+                for (i, t) in (affected or [])
+            ],
+            "session": _status_payload(session, config),
+        }
+        print(json.dumps(payload))
+        return
+    if human_line:
+        print(human_line)
+    print_task_list(session, config)
+
+
+def emit_error(msg, **extra):
+    """Emit an error — text to stderr or JSON to stderr, then exit 1."""
+    if OUTPUT_FORMAT == "json":
+        payload = {"error": msg}
+        payload.update(extra)
+        print(json.dumps(payload), file=sys.stderr)
+    else:
+        print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _title_matches(actual, echoed):
+    """Case-insensitive, whitespace-tolerant title comparison for --as."""
+    def norm(s):
+        return " ".join((s or "").lower().split())
+    return norm(actual) == norm(echoed)
+
+
 # ── Commands ─────────────────────────────────────────────────────────
 
 
@@ -459,6 +670,19 @@ def cmd_done(args):
         fail("No current task.")
     if task["status"] != "in_progress":
         fail(f"{tid(idx)} is {task['status']}, not in_progress.")
+
+    # Echo-check: --as "<title>" must match the target task's title.
+    echoed = getattr(args, "as_title", None)
+    if echoed is not None and not _title_matches(task.get("title"), echoed):
+        emit_error(
+            f"--as echoed title does not match target task. "
+            f"Expected \"{task.get('title')}\" (uid {task.get('uid')}), "
+            f"got \"{echoed}\".",
+            expected_title=task.get("title"),
+            expected_uid=task.get("uid"),
+            echoed=echoed,
+            tid=tid(idx),
+        )
 
     if task.get("dispatched"):
         print(f"warning: {tid(idx)} is dispatched to another session.", file=sys.stderr)
@@ -475,7 +699,9 @@ def cmd_done(args):
     render()
 
     est = task.get("estimate_min", 0)
-    print(f"\u2713 {tid(idx)} done ({actual}m/{est}m est). [{remaining_summary(session)}]")
+    human = f"\u2713 {tid(idx)} done ({actual}m/{est}m est). [{remaining_summary(session)}]"
+    emit_mutation("done", session, affected=[(idx, task)],
+                  config=load_config(), human_line=human)
 
 
 def cmd_blocked(args):
@@ -502,7 +728,8 @@ def cmd_blocked(args):
     if reason:
         line += f" ({reason})"
     line += f" [{remaining_summary(session)}]"
-    print(line)
+    emit_mutation("blocked", session, affected=[(idx, task)],
+                  config=load_config(), human_line=line)
 
 
 def cmd_defer(args):
@@ -552,7 +779,9 @@ def cmd_defer(args):
     save_session(session)
     render()
 
-    print(f"\u21b7 {tid(idx)} deferred ({count}x). [{remaining_summary(session)}]")
+    human = f"\u21b7 {tid(idx)} deferred ({count}x). [{remaining_summary(session)}]"
+    emit_mutation("defer", session, affected=[(idx, task)],
+                  config=load_config(), human_line=human)
 
 
 def cmd_add(args):
@@ -631,7 +860,9 @@ def cmd_add(args):
 
     status_tag = " (done)" if args.done else ""
     parent_tag = f" (child of {tid(new_task['parent'])})" if "parent" in new_task else ""
-    print(f"+ {tid(insert_pos)} added: \"{title}\" (~{est}m){status_tag}{parent_tag}. [{remaining_summary(session)}]")
+    human = f"+ {tid(insert_pos)} added: \"{title}\" (~{est}m){status_tag}{parent_tag}. [{remaining_summary(session)}]"
+    emit_mutation("add", session, affected=[(insert_pos, new_task)],
+                  config=load_config(), human_line=human)
 
 
 def cmd_switch(args):
@@ -673,7 +904,8 @@ def cmd_switch(args):
         prev_task = session["tasks"][prev_idx]
         if prev_task.get("status") == "in_progress":
             line += f". {tid(prev_idx)} still in_progress (--no-pause)."
-    print(line)
+    emit_mutation("switch", session, affected=[(target, task)],
+                  config=load_config(), human_line=line)
 
 
 def cmd_move(args):
@@ -686,7 +918,9 @@ def cmd_move(args):
     dest = max(0, min(dest, len(tasks)))
 
     if source == dest:
-        print(f"{tid(source)} is already at that position.")
+        human = f"{tid(source)} is already at that position."
+        emit_mutation("move", session, affected=[(source, tasks[source])],
+                      config=load_config(), human_line=human)
         return
 
     # Pop from source, then insert at dest (the desired final position).
@@ -714,7 +948,9 @@ def cmd_move(args):
     save_session(session)
     render()
 
-    print(f"\u2194 {tid(dest)} \u2014 {moved['title']} (moved from {tid(source)})")
+    human = f"\u2194 {tid(dest)} \u2014 {moved['title']} (moved from {tid(source)})"
+    emit_mutation("move", session, affected=[(dest, moved)],
+                  config=load_config(), human_line=human)
 
 
 def cmd_remove(args):
@@ -724,7 +960,21 @@ def cmd_remove(args):
     tasks = session.get("tasks", [])
     cur_idx = session.get("current_task_index")
 
+    # Echo-check: --as "<title>" must match the target task's title.
+    echoed = getattr(args, "as_title", None)
+    if echoed is not None and not _title_matches(task.get("title"), echoed):
+        emit_error(
+            f"--as echoed title does not match target task. "
+            f"Expected \"{task.get('title')}\" (uid {task.get('uid')}), "
+            f"got \"{echoed}\".",
+            expected_title=task.get("title"),
+            expected_uid=task.get("uid"),
+            echoed=echoed,
+            tid=tid(target),
+        )
+
     title = task["title"]
+    removed_snapshot = dict(task)
     tasks.pop(target)
 
     # Adjust current_task_index
@@ -739,7 +989,8 @@ def cmd_remove(args):
     render()
 
     line = f"\u2716 {tid(target)} removed: \"{title}\". [{remaining_summary(session)}]"
-    print(line)
+    emit_mutation("remove", session, affected=[(target, removed_snapshot)],
+                  config=load_config(), human_line=line)
 
 
 def cmd_dispatch(args):
@@ -758,7 +1009,9 @@ def cmd_dispatch(args):
     save_session(session)
     render()
 
-    print(f"\u21c4 {tid(target)} dispatched \u2014 {task['title']}")
+    human = f"\u21c4 {tid(target)} dispatched \u2014 {task['title']}"
+    emit_mutation("dispatch", session, affected=[(target, task)],
+                  config=load_config(), human_line=human)
 
 
 def _move_task_to_backlog(session, idx, target_date=None, not_before=None, deadline=None, tags=None):
@@ -801,7 +1054,9 @@ def _move_task_to_backlog(session, idx, target_date=None, not_before=None, deadl
 
     date_tag = f" (target: {target_date})" if target_date else ""
     deadline_tag = f" (deadline: {deadline})" if deadline else ""
-    print(f"\u21b3 {tid(idx)} \u2192 backlog: \"{title}\"{date_tag}{deadline_tag}. [{remaining_summary(session)}]")
+    human = f"\u21b3 {tid(idx)} \u2192 backlog: \"{title}\"{date_tag}{deadline_tag}. [{remaining_summary(session)}]"
+    emit_mutation("backlog:from-session", session, affected=[(idx, task)],
+                  config=load_config(), human_line=human)
 
 
 def cmd_backlog(args):
@@ -879,7 +1134,19 @@ def _backlog_add(args):
     if bl_deadline:
         date_info.append(f"deadline: {bl_deadline}")
     date_str = f" ({', '.join(date_info)})" if date_info else ""
-    print(f"+ backlog: \"{title}\" (~{args.est}m){date_str}. [backlog: {len(backlog['items'])} items]")
+    human = f"+ backlog: \"{title}\" (~{args.est}m){date_str}. [backlog: {len(backlog['items'])} items]"
+    # backlog --add does not mutate session; re-load session so the full task list
+    # reflects the unchanged plan (LLM feedback loop per Stream A).
+    try:
+        _session = load_session()
+        emit_mutation("backlog:add", _session, affected=[], config=load_config(), human_line=human)
+    except SystemExit:
+        # No session yet — fall back to just the human line.
+        if OUTPUT_FORMAT == "json":
+            print(json.dumps({"result": "ok", "action": "backlog:add",
+                              "backlog_count": len(backlog['items'])}))
+        else:
+            print(human)
 
 
 def _backlog_from_session(args):
@@ -1016,7 +1283,9 @@ def _backlog_promote(args):
     save_session(session)
     render()
 
-    print(f"\u2191 {tid(insert_pos)} promoted from backlog: \"{item['title']}\". [{remaining_summary(session)}]")
+    human = f"\u2191 {tid(insert_pos)} promoted from backlog: \"{item['title']}\". [{remaining_summary(session)}]"
+    emit_mutation("backlog:promote", session, affected=[(insert_pos, new_task)],
+                  config=load_config(), human_line=human)
 
 
 def _backlog_drop(args):
@@ -1033,7 +1302,22 @@ def _backlog_drop(args):
 
     dropped = items.pop(found)
     save_backlog(backlog)
-    print(f"\u2716 dropped from backlog: \"{dropped['title']}\". [backlog: {len(items)} items]")
+    human = f"\u2716 dropped from backlog: \"{dropped['title']}\". [backlog: {len(items)} items]"
+    if OUTPUT_FORMAT == "json":
+        try:
+            _session = load_session()
+            emit_mutation("backlog:drop", _session, affected=[], config=load_config(), human_line=human)
+        except SystemExit:
+            print(json.dumps({"result": "ok", "action": "backlog:drop",
+                              "backlog_count": len(items)}))
+    else:
+        print(human)
+        # Session unchanged, but a follow-up compact list keeps the LLM's model warm.
+        try:
+            _session = load_session()
+            print_task_list(_session, load_config())
+        except SystemExit:
+            pass
 
 
 def _backlog_edit(args):
@@ -1081,7 +1365,20 @@ def _backlog_edit(args):
         fail("Nothing to edit. Use --target, --deadline, --not-before, --tag, --notes, or --est.")
 
     save_backlog(backlog)
-    print(f"\u270e backlog \"{found['title']}\": {', '.join(changed)}")
+    human = f"\u270e backlog \"{found['title']}\": {', '.join(changed)}"
+    if OUTPUT_FORMAT == "json":
+        try:
+            _session = load_session()
+            emit_mutation("backlog:edit", _session, affected=[], config=load_config(), human_line=human)
+        except SystemExit:
+            print(json.dumps({"result": "ok", "action": "backlog:edit"}))
+    else:
+        print(human)
+        try:
+            _session = load_session()
+            print_task_list(_session, load_config())
+        except SystemExit:
+            pass
 
 
 def cmd_reckon(args):
@@ -1101,11 +1398,14 @@ def cmd_reckon(args):
         save_session(session)
         render()
         count = task.get("deferral_count", 0)
-        print(f"\u21b7 {tid(idx)} deferred ({count}x, keeping). [{remaining_summary(session)}]")
+        human = f"\u21b7 {tid(idx)} deferred ({count}x, keeping). [{remaining_summary(session)}]"
+        emit_mutation("reckon:keep", session, affected=[(idx, task)],
+                      config=load_config(), human_line=human)
 
     elif choice in ("x", "drop"):
         title = task["title"]
         tasks = session.get("tasks", [])
+        dropped_snapshot = dict(task)
         tasks.pop(idx)
         cur_idx = session.get("current_task_index")
         if cur_idx is not None:
@@ -1115,7 +1415,9 @@ def cmd_reckon(args):
                 session["current_task_index"] = cur_idx - 1
         save_session(session)
         render()
-        print(f"\u2716 {tid(idx)} dropped: \"{title}\". [{remaining_summary(session)}]")
+        human = f"\u2716 {tid(idx)} dropped: \"{title}\". [{remaining_summary(session)}]"
+        emit_mutation("reckon:drop", session, affected=[(idx, dropped_snapshot)],
+                      config=load_config(), human_line=human)
 
     elif choice in ("t", "timebox"):
         target = args.date
@@ -1134,7 +1436,9 @@ def cmd_reckon(args):
             session["current_task_index"] = None
         save_session(session)
         render()
-        print(f"\u21b7 {tid(idx)} deferred for decomposition. [{remaining_summary(session)}]")
+        human = f"\u21b7 {tid(idx)} deferred for decomposition. [{remaining_summary(session)}]"
+        emit_mutation("reckon:break", session, affected=[(idx, task)],
+                      config=load_config(), human_line=human)
 
     elif choice in ("d", "delegate"):
         was_current = (idx == session.get("current_task_index"))
@@ -1146,7 +1450,9 @@ def cmd_reckon(args):
         task["notes"] = f"{existing}{sep}Reckoning: delegate/reassign.".strip()
         save_session(session)
         render()
-        print(f"\u21b7 {tid(idx)} deferred (delegate/reassign). [{remaining_summary(session)}]")
+        human = f"\u21b7 {tid(idx)} deferred (delegate/reassign). [{remaining_summary(session)}]"
+        emit_mutation("reckon:delegate", session, affected=[(idx, task)],
+                      config=load_config(), human_line=human)
 
     else:
         fail(f"Unknown reckoning choice: {choice}. Use b/d/x/t/k.")
@@ -1155,7 +1461,11 @@ def cmd_reckon(args):
 def cmd_status(args):
     session = load_session()
     config = load_config()
-    print(status_line(session, config))
+    if OUTPUT_FORMAT == "json":
+        print(json.dumps(_status_payload(session, config)))
+    else:
+        print(status_line(session, config))
+        print_task_list(session, config)
 
 
 def cmd_undo(args):
@@ -1181,7 +1491,17 @@ def cmd_undo(args):
 
     # Remove the consumed entry
     paths.UNDO_LOG.write_text("\n".join(lines[:-1]) + "\n" if lines[:-1] else "")
-    print(f"\u21a9 Undone ({target_str}). Restored state from {last['ts'][:19]}.")
+    human = f"\u21a9 Undone ({target_str}). Restored state from {last['ts'][:19]}."
+    # Re-read current state for full-list feedback (session may or may not have
+    # been the thing restored — either way we emit the current session view).
+    try:
+        _session = load_session()
+        emit_mutation("undo", _session, affected=[], config=load_config(), human_line=human)
+    except SystemExit:
+        if OUTPUT_FORMAT == "json":
+            print(json.dumps({"result": "ok", "action": "undo", "target": target_str}))
+        else:
+            print(human)
 
 
 def cmd_history(args):
@@ -1471,9 +1791,26 @@ def build_parser():
         prog="transition.py",
         description="workplanner task state transitions.",
     )
+    parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. 'text' (default) is glyph-friendly, LLM- and human-readable. "
+             "'json' emits a structured response suitable for programmatic parsing.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("done", help="Mark current task done.")
+    p_done = sub.add_parser("done", help="Mark current task done.")
+    p_done.add_argument(
+        "--as",
+        dest="as_title",
+        type=str,
+        default=None,
+        help="Echo the current task's title. If provided, the CLI refuses the mutation "
+             "unless the echoed title matches the target task's title "
+             "(case-insensitive, whitespace-tolerant).",
+    )
 
     p_blocked = sub.add_parser("blocked", help="Mark current task blocked.")
     p_blocked.add_argument("reason", nargs="*", help="Blocking reason (optional).")
@@ -1496,6 +1833,15 @@ def build_parser():
 
     p_remove = sub.add_parser("remove", help="Remove a task entirely.")
     p_remove.add_argument("target", help="Task ID (t3) or 0-based index (2).")
+    p_remove.add_argument(
+        "--as",
+        dest="as_title",
+        type=str,
+        default=None,
+        help="Echo the target task's title. If provided, the CLI refuses the mutation "
+             "unless the echoed title matches the target task's title "
+             "(case-insensitive, whitespace-tolerant).",
+    )
 
     p_move = sub.add_parser("move", help="Reorder a task.")
     p_move.add_argument("source", help="Task to move (t3 or 0-based index).")
@@ -1695,6 +2041,10 @@ def main():
     ensure_wrapper()
     parser = build_parser()
     args = parser.parse_args()
+    # Set module-level output format for this invocation so commands can
+    # branch on it (text vs json) without threading it through every call.
+    global OUTPUT_FORMAT
+    OUTPUT_FORMAT = getattr(args, "output_format", "text") or "text"
     handler = DISPATCH.get(args.command)
     if handler:
         handler(args)
