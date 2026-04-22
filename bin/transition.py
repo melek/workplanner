@@ -471,6 +471,56 @@ def load_user_json():
         return {}
 
 
+# One-shot flag so the inbox_slack_channels deprecation warning fires at
+# most once per process even if load_config() runs multiple times.
+_INBOX_SLACK_CHANNELS_WARNED = False
+
+
+def _fold_inbox_slack_channels(config):
+    """Merge legacy `inbox_slack_channels` into canonical `slack_channel_ids`.
+
+    The two fields held identical channel-name -> ID maps in every profile
+    the plugin has shipped against; keeping both as live config creates a
+    drift risk (update one, forget the other) and a lookup ambiguity for
+    skill authors. See https://github.com/melek/workplanner/issues/27.
+
+    Behavior:
+    - If only `slack_channel_ids` is present: no-op.
+    - If only `inbox_slack_channels` is present: copy it to `slack_channel_ids`,
+      emit a one-time stderr warning, leave the legacy key in place so the
+      user's config.json is untouched.
+    - If both are present: canonical (`slack_channel_ids`) wins on any key
+      conflict; non-conflicting keys from the legacy map are folded in; one-
+      time warning fires. Legacy key is left in place.
+
+    Skills should read `slack_channel_ids` exclusively from this point on.
+    """
+    global _INBOX_SLACK_CHANNELS_WARNED
+    if not isinstance(config, dict):
+        return
+    legacy = config.get("inbox_slack_channels")
+    if not isinstance(legacy, dict):
+        return
+    canonical = config.get("slack_channel_ids")
+    if not isinstance(canonical, dict):
+        canonical = {}
+        config["slack_channel_ids"] = canonical
+    # Canonical wins on conflict; pull in only keys the canonical map lacks.
+    for k, v in legacy.items():
+        if k not in canonical:
+            canonical[k] = v
+    if _INBOX_SLACK_CHANNELS_WARNED:
+        return
+    _INBOX_SLACK_CHANNELS_WARNED = True
+    print(
+        "warning: config.inbox_slack_channels is deprecated; its entries have "
+        "been merged into config.slack_channel_ids for this run. "
+        "See https://github.com/melek/workplanner/issues/27. "
+        "Remove config.inbox_slack_channels from config.json to silence this warning.",
+        file=sys.stderr,
+    )
+
+
 def load_config():
     """Load profile config with user.json fallback for timezone/eod_target."""
     paths = resolve_paths()
@@ -483,6 +533,7 @@ def load_config():
     for key in ("timezone", "eod_target"):
         if key not in config and key in user:
             config[key] = user[key]
+    _fold_inbox_slack_channels(config)
     return config
 
 

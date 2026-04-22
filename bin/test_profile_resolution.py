@@ -192,6 +192,84 @@ def main():
         assert "--profile flag" in out
         print("Bonus: --profile flag > $WPL_PROFILE [OK]")
 
+        # ── Slack-map fold (issue #27) ───────────────────────────────
+        # Patch hal's config.json with both slack_channel_ids (canonical)
+        # and inbox_slack_channels (legacy). Verify (a) the merge folds
+        # in only legacy keys missing from canonical, (b) canonical wins
+        # on conflict, (c) a one-time deprecation warning fires on stderr.
+        import json as _json
+        hal_config_path = wpl_root / "profiles" / "hal" / "config.json"
+        hal_config = _json.loads(hal_config_path.read_text())
+        hal_config["slack_channel_ids"] = {
+            "team-room": "C-CANONICAL-1",     # canonical-only key
+            "shared":    "C-CANONICAL-WIN",    # conflict — canonical must win
+        }
+        hal_config["inbox_slack_channels"] = {
+            "shared":    "C-LEGACY-LOSE",      # conflict — legacy must lose
+            "alerts":    "C-LEGACY-2",         # legacy-only key, must fold in
+        }
+        hal_config_path.write_text(_json.dumps(hal_config, indent=2))
+
+        # `config get` triggers load_config(); merged map appears in stdout
+        # and the deprecation warning appears in stderr (one line, once).
+        _, out, err = _run(hal_dir, env, "config", "get",
+                           "slack_channel_ids", check_exit=0)
+        # Parse `slack_channel_ids: {json}` from stdout; whoami banner
+        # may precede.
+        merged_line = None
+        for line in out.splitlines():
+            if line.startswith("slack_channel_ids:"):
+                merged_line = line.split(":", 1)[1].strip()
+                break
+        assert merged_line is not None, \
+            f"S1: didn't find slack_channel_ids line in stdout: {out!r}"
+        merged = _json.loads(merged_line)
+        assert merged.get("team-room") == "C-CANONICAL-1", \
+            f"S1: canonical-only key dropped: {merged!r}"
+        assert merged.get("shared") == "C-CANONICAL-WIN", \
+            f"S1: legacy won on conflict (should be canonical): {merged!r}"
+        assert merged.get("alerts") == "C-LEGACY-2", \
+            f"S1: legacy-only key not folded in: {merged!r}"
+        assert "config.inbox_slack_channels is deprecated" in err, \
+            f"S1: expected deprecation warning in stderr, got: {err!r}"
+        # Warning fires at most once per process. Each subprocess is a
+        # fresh process, so re-running should also warn — but the count
+        # within a single invocation is one.
+        warn_count = err.count("config.inbox_slack_channels is deprecated")
+        assert warn_count == 1, \
+            f"S1: expected exactly one warning per process, got {warn_count}: {err!r}"
+        print("S1: slack-map fold + warning [OK]")
+
+        # Variant: only canonical present — no warning.
+        hal_config["slack_channel_ids"] = {"team-room": "C-CANONICAL-ONLY"}
+        hal_config.pop("inbox_slack_channels", None)
+        hal_config_path.write_text(_json.dumps(hal_config, indent=2))
+        _, out, err = _run(hal_dir, env, "config", "get",
+                           "slack_channel_ids", check_exit=0)
+        assert "deprecated" not in err, \
+            f"S2: warning fired with no legacy key present: {err!r}"
+        print("S2: canonical-only is silent [OK]")
+
+        # Variant: only legacy present — copied to canonical, warning fires.
+        hal_config.pop("slack_channel_ids", None)
+        hal_config["inbox_slack_channels"] = {"alerts": "C-LEGACY-ONLY"}
+        hal_config_path.write_text(_json.dumps(hal_config, indent=2))
+        _, out, err = _run(hal_dir, env, "config", "get",
+                           "slack_channel_ids", check_exit=0)
+        merged_line = None
+        for line in out.splitlines():
+            if line.startswith("slack_channel_ids:"):
+                merged_line = line.split(":", 1)[1].strip()
+                break
+        assert merged_line is not None, \
+            f"S3: didn't find slack_channel_ids line in stdout: {out!r}"
+        merged = _json.loads(merged_line)
+        assert merged.get("alerts") == "C-LEGACY-ONLY", \
+            f"S3: legacy entry not promoted to canonical: {merged!r}"
+        assert "config.inbox_slack_channels is deprecated" in err, \
+            f"S3: expected deprecation warning, got: {err!r}"
+        print("S3: legacy-only promoted + warning [OK]")
+
         print("\nAll scenarios passed.")
         return 0
     finally:

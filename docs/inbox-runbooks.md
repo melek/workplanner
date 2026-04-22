@@ -4,7 +4,7 @@ Deterministic sweep procedures for each inbox source. Executed sequentially duri
 
 **Procedure vs Policy:** Runbooks define *what to collect* and *how to tag it* (procedure). Priority assignment and estimate defaults are applied during the triage step using `config.triage.source_priority` and `config.triage.estimates` (policy). See `docs/triage-framework.md` and `docs/state-schema.md` for the config schema.
 
-**Intent, not tool names.** Runbooks describe what to collect in integration-agnostic terms. They do not name specific MCP providers, tool methods, scopes, or API shapes — those vary across users and change over time. Let the assistant map each step's intent onto whichever integration tools the user has available. Config field names (e.g. `config.inbox_slack_channels`) are user-declared shape and are preserved as-is.
+**Intent, not tool names.** Runbooks describe what to collect in integration-agnostic terms. They do not name specific MCP providers, tool methods, scopes, or API shapes — those vary across users and change over time. Let the assistant map each step's intent onto whichever integration tools the user has available. Config field names (e.g. `config.slack_channel_ids`) are user-declared shape and are preserved as-is.
 
 ---
 
@@ -115,13 +115,13 @@ Used when `config.integrations.team_activity` is not configured. These are the o
 <summary>Runbook 4 (legacy): Messaging</summary>
 
 **Intent:** Surface incoming messaging activity the user needs to respond to, across four conceptual layers.
-**Config:** `config.slack_channel_ids`, `config.inbox_slack_channels`, `config.inbox_slack_team_handles`, `config.inbox_slack_announcement_authors`, `config.user.slack`
+**Config:** `config.slack_channel_ids`, `config.inbox_slack_team_handles`, `config.inbox_slack_announcement_authors`, `config.user.slack`
 
 Four layers — use whichever methods the user's messaging integration supports. Prefer user-scoped scans (the user's own recent activity and direct pings) over broad searches when the integration's permissions allow both:
 
 - **Layer 1 (ping):** Find messages directed at `config.user.slack` since `sweep_since`
 - **Layer 2 (team-ping):** Find mentions of each handle in `config.inbox_slack_team_handles`
-- **Layer 3 (channel):** List recent messages in each channel in `config.inbox_slack_channels` since `sweep_since`
+- **Layer 3 (channel):** List recent messages in each channel in `config.slack_channel_ids` since `sweep_since`
 - **Layer 4 (announcement):** Find recent posts from each author in `config.inbox_slack_announcement_authors`
 
 </details>
