@@ -587,9 +587,39 @@ def _config_set_nested(config, key, value):
         d[parts[-1]] = value
 
 
+# Module-level flag so the UTC-fallback warning fires at most once per
+# process — local_today() is called many times per invocation (status
+# header, date fields in payloads, parse_relative_date, decision log,
+# etc.), and one warning is plenty.
+_TZ_FALLBACK_WARNED = False
+
+
 def local_today(config=None):
-    """Return today's date in the configured timezone."""
-    tz_name = (config or {}).get("timezone", "UTC")
+    """Return today's date in the configured timezone.
+
+    Falls back to UTC when no `timezone` key is set on the resolved
+    profile. A one-time stderr warning fires on the first fall-through
+    per process so the LLM / user can see that the `date` field on the
+    header and every JSON payload is UTC-based — not local — and can be
+    off by a day. The default stays UTC: guessing the system timezone
+    heuristically would violate the "context compiler, not decision
+    engine" stance (issue #18, finding 9). The user fixes it
+    deliberately via `wpl config set timezone America/Los_Angeles
+    --rationale "..."`.
+    """
+    global _TZ_FALLBACK_WARNED
+    cfg = config or {}
+    tz_name = cfg.get("timezone")
+    if not tz_name:
+        if not _TZ_FALLBACK_WARNED:
+            _TZ_FALLBACK_WARNED = True
+            print(
+                "warning: profile has no 'timezone' set; using UTC. "
+                "Run 'wpl config set timezone America/Los_Angeles "
+                "--rationale \"...\"' to fix.",
+                file=sys.stderr,
+            )
+        tz_name = "UTC"
     return datetime.now(ZoneInfo(tz_name)).date()
 
 
