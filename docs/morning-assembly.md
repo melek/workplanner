@@ -36,6 +36,16 @@ Compute `sweep_since` from previous session:
 - If no previous session: use yesterday 08:00 in `config.timezone`
 - Store as `session.sweep_since` (ISO 8601)
 
+### Step 0.25: Read yesterday's handoff doc
+
+Before any inbox scanning, read yesterday's local handoff (`~/.workplanner/profiles/<name>/handoffs/YYYY-MM-DD.md`) via `bin/handoff.py read --date <yesterday>`. Aggregates across session sub-sections. Feeds into:
+
+- **Carryover mini-triage** in Step 3 (below) — each deferred task's `defer_reason` is surfaced inline so "does this still matter?" has context.
+- **Headlines** — "Open questions" from yesterday become session-start headlines.
+- **Pre-conditioning** — "Context for tomorrow" notes are read once before the day's planning.
+
+If the file is absent (fresh install, or yesterday's `/eod` skipped), log "No handoff for yesterday" and fall back to session-JSON carryover (status + deferral_count only, no reasons).
+
 ### Step 0.5: Pre-work activity scan
 
 Before the inbox sweep, check if the user already did work this morning (Slack replies, blog comments, etc.). Uses `config.triage.pre_work` settings. If activity exceeds `min_minutes_for_task` (default: 5), inserts a completed "Morning communication work" task at position 0. See `skills/start/SKILL.md` for full procedure.
@@ -85,9 +95,10 @@ Transform `session.inbox_items[]` into `session.tasks[]`.
 
 1. **Deduplicate** — Match by `dedupe_key` (Linear ref or normalized URL). Merge: keep highest priority, combine context
 2. **Triage & Prioritize** — Assign priority tiers, apply timebox estimates
-3. **Filter for Today** — Always include carryover/critical/high/overdue/due-today. Medium if budget allows. Cap at 10 tasks.
-4. **Order** — Carryover → Critical → High (due-today first) → Medium → Focus/check-in
-5. **Insert Time Structure** — Protected blocks + calendar events. Compute budget.
+3. **Carryover mini-triage** — For each carryover task, surface its `defer_reason` (from yesterday's handoff + task state) and ask "keep / defer / drop / backlog / re-scope?". Items at `deferral_count >= config.triage.deferrals.reckoning_threshold` escalate to the full reckoning prompt. Full details: `skills/start/SKILL.md` Step 3.
+4. **Filter for Today** — Always include carryover/critical/high/overdue/due-today. Medium if budget allows. Cap at 10 tasks.
+5. **Order** — Carryover → Critical → High (due-today first) → Medium → Focus/check-in
+6. **Insert Time Structure** — Protected blocks + calendar events. Compute budget.
 
 After triage, **clear `session.inbox_items[]`** to keep session JSON lean. The data has been consumed into `session.tasks[]` and `session.headlines[]`.
 
