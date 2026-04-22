@@ -232,6 +232,10 @@ python3 bin/handoff.py path [--date YYYY-MM-DD]    # prints the resolved path
 
 `write` is idempotent within a session-id: re-running overwrites that session's sub-sections only. Other sessions' sub-sections and unrecognised `## ...` sections (e.g., human free-text additions) are preserved verbatim.
 
+### Stale-session recovery
+
+When `/start` finds a stale session (`current-session.json` date ≠ today) with `eod_posted: false`, it backfills a handoff for the stale date at the **same path** (`~/.workplanner/profiles/<name>/handoffs/{stale_date}.md`) using a distinct session-id of the form `stale-recovery-{stale_date}`. The next morning's `/start` Step 0.25 reads this file the same way it reads a normal-path handoff — aggregation across sub-sections is session-id-agnostic. See `skills/start/SKILL.md` → "Stale Session Handler".
+
 ---
 
 ## Briefings
@@ -402,3 +406,19 @@ wpl decision explain <key>
 ```
 
 `wpl config set` always creates a corresponding decision log entry.
+
+---
+
+## Deprecated
+
+### `config.handoffs.*` (removed in effect as of issue #13)
+
+The following keys are no longer read or honoured by any skill or CLI:
+
+- `config.handoffs.dir`
+- `config.handoffs.filename_pattern`
+- `config.handoffs.carryover_from_handoff`
+
+They previously configured a user-owned ad-hoc handoff file used only by `/start`'s stale-session handler. Handoffs now live exclusively at `~/.workplanner/profiles/<name>/handoffs/YYYY-MM-DD.md` and are managed by `bin/handoff.py` (see **Handoff docs** above). Stale-session recovery writes to the same path, so there is no longer a second mechanism to configure.
+
+If any of these keys is present in a profile's `config.json`, `load_config()` emits a one-line deprecation warning on stderr (at most once per process). The keys themselves are left untouched — remove them from `config.json` when convenient to silence the warning.
