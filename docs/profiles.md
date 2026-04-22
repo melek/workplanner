@@ -75,12 +75,16 @@ wpl profile create NAME [--workspace PATH]    Create a profile, optionally with 
 wpl profile associate NAME PATH               Add a workspace path to an existing profile.
 wpl profile disassociate NAME PATH            Remove a workspace path from a profile.
 wpl profile whoami                            Which profile does cwd resolve to, and how?
+wpl profile whoami --print-root               Print only the resolved profile root path.
+wpl profile whoami --print-name               Print only the resolved profile name.
 wpl profile validate                          Report overlaps and missing-workspace warnings.
 wpl profile migrate                           Interactively associate paths with existing profiles.
 wpl profile switch NAME                       [deprecated] Flip the `active` symlink.
 wpl profile active                            Print the name the `active` symlink points to.
 wpl profile delete NAME                       Delete a profile.
 ```
+
+The `--print-root` / `--print-name` flags are the supported way for shell scripts and skill prose to resolve the concrete profile root/name without parsing the multi-line default output. They honour the same precedence chain (CLI flag > env var > cwd match > single-profile fallback) and exit non-zero if resolution fails.
 
 ## First-run flow for an unassociated cwd
 

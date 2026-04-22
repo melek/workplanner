@@ -603,8 +603,21 @@ def save_session(session, undo=True):
 
 
 def render():
-    """Re-render dashboard after mutation."""
-    subprocess.run([sys.executable, str(RENDER)], capture_output=True)
+    """Re-render dashboard after mutation.
+
+    Threads the resolved profile name through to the subprocess via
+    $WPL_PROFILE so render_dashboard.py reads/writes the same profile
+    this invocation mutated — not whatever the `active` symlink happens
+    to point at. Fixes the split-brain described in issue #16.
+    """
+    env = dict(os.environ)
+    try:
+        env["WPL_PROFILE"] = resolve_paths().PROFILE_NAME
+    except SystemExit:
+        # Resolution failed (no profile), let the subprocess inherit
+        # whatever ambient env says; it handles missing-profile itself.
+        pass
+    subprocess.run([sys.executable, str(RENDER)], capture_output=True, env=env)
 
 
 def fail(msg):
@@ -846,8 +859,13 @@ STATUS_GLYPH = {
 
 
 def _task_record(idx, task):
-    """Compact dict representation of a task for JSON emission."""
-    return {
+    """Compact dict representation of a task for JSON emission.
+
+    ``defer_reason`` is included only when present so non-deferred tasks
+    don't carry a null field (keeps the common case small). This matches
+    how the text-mode one-liner only appends the reason when set.
+    """
+    record = {
         "tid": tid(idx),
         "index": idx,
         "uid": task.get("uid"),
@@ -865,6 +883,10 @@ def _task_record(idx, task):
         "deferral_count": task.get("deferral_count", 0),
         "parent": task.get("parent"),
     }
+    defer_reason = task.get("defer_reason")
+    if defer_reason:
+        record["defer_reason"] = defer_reason
+    return record
 
 
 def session_records(session):
@@ -1147,20 +1169,41 @@ def cmd_defer(args):
                  .get("deferrals", {})
                  .get("reckoning_threshold", 3))
     if count >= threshold:
-        print(f"\u26a0 {tid(idx)} \"{task['title']}\" has been deferred {count} times.")
-        # Surface prior context so the reckoning decision has the "why" in hand.
-        if reason:
-            print(f"  Reason (this defer): {reason}")
-        elif prior_reason:
-            print(f"  Last reason: {prior_reason}")
-        print(f"  What's actually going on?")
-        print(f"  [b] Break it down into smaller tasks")
-        print(f"  [d] Delegate \u2014 reassign or ask for help")
-        print(f"  [x] Drop it \u2014 it's not going to happen")
-        print(f"  [t] Timebox \u2014 schedule a dedicated block (sends to backlog with target date)")
-        print(f"  [k] Keep deferring \u2014 I'll get to it")
-        # Save the incremented count (and reason, if given) but don't change status yet.
+        # Save the incremented count (and reason, if given) *before* emitting
+        # so the payload is consistent with what just landed on disk. Status
+        # is intentionally unchanged: the caller decides via `wpl reckon`.
         save_session(session, undo=False)
+
+        choices = ["b", "d", "x", "t", "k"]
+        prompt_short = "Break down / Delegate / Drop / Timebox / Keep"
+
+        if OUTPUT_FORMAT == "json":
+            # Structured payload for programmatic callers. Exit 2 still
+            # signals "reckoning needed"; the caller now has the full task
+            # record (including defer_reason and deferral_count) to surface
+            # the decision. Fixes the Stream A / Stream B contract gap.
+            payload = {
+                "result": "reckoning-required",
+                "action": "defer",
+                "task": _task_record(idx, task),
+                "threshold": threshold,
+                "choices": choices,
+                "prompt": prompt_short,
+            }
+            print(json.dumps(payload))
+        else:
+            print(f"\u26a0 {tid(idx)} \"{task['title']}\" has been deferred {count} times.")
+            # Surface prior context so the reckoning decision has the "why" in hand.
+            if reason:
+                print(f"  Reason (this defer): {reason}")
+            elif prior_reason:
+                print(f"  Last reason: {prior_reason}")
+            print(f"  What's actually going on?")
+            print(f"  [b] Break it down into smaller tasks")
+            print(f"  [d] Delegate \u2014 reassign or ask for help")
+            print(f"  [x] Drop it \u2014 it's not going to happen")
+            print(f"  [t] Timebox \u2014 schedule a dedicated block (sends to backlog with target date)")
+            print(f"  [k] Keep deferring \u2014 I'll get to it")
         sys.exit(2)  # Signal to calling skill that reckoning is needed
 
     was_current = (idx == session.get("current_task_index"))
@@ -2045,6 +2088,18 @@ def cmd_profile(args):
 
     elif sub == "whoami":
         cwd = _normalize_path(os.getcwd())
+        print_root = getattr(args, "print_root", False)
+        print_name = getattr(args, "print_name", False)
+        # --print-root / --print-name short-circuits to a single line,
+        # suitable for shell substitution. Exits non-zero (via fail())
+        # when resolution fails so callers can guard with `|| exit 0`.
+        if print_root or print_name:
+            target = resolve_profile_root()  # fails loudly if unresolved
+            if print_root:
+                print(str(target))
+            else:
+                print(target.name)
+            return
         override = PROFILE_OVERRIDE or os.environ.get("WPL_PROFILE", "").strip() or None
         if override:
             target = _find_profile_by_name(override)
@@ -2463,9 +2518,17 @@ def build_parser():
         "disassociate", help="Remove a workspace path from a profile")
     p_disassoc.add_argument("name", help="Profile name")
     p_disassoc.add_argument("path", help="Absolute path to remove")
-    profile_sub.add_parser(
+    p_whoami = profile_sub.add_parser(
         "whoami",
         help="Show which profile the current cwd resolves to, and how.")
+    p_whoami.add_argument(
+        "--print-root", action="store_true",
+        help="Print only the resolved profile root path (absolute). "
+             "Useful from shell scripts that need the concrete directory "
+             "without parsing the full whoami output.")
+    p_whoami.add_argument(
+        "--print-name", action="store_true",
+        help="Print only the resolved profile name (no directory).")
     profile_sub.add_parser(
         "validate",
         help="Check for workspace overlaps and missing-workspace warnings.")

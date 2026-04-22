@@ -14,6 +14,16 @@ End-of-day wrap-up. Five steps: finalize tasks, draft Linear update, draft Slack
 **Handoff library:** `${CLAUDE_PLUGIN_ROOT}/bin/handoff.py` (read / write / path subcommands)
 **Full procedure:** `${CLAUDE_PLUGIN_ROOT}/docs/eod-consolidation.md`
 
+## Profile resolution
+
+Before any file reads that reference profile state, resolve the concrete profile root **once** and reuse it as `PROFILE_ROOT`. Do not hardcode `~/.workplanner/profiles/active/…` — the `active` symlink is no longer the source of truth (it races under concurrent sessions / `--profile` overrides, per issue #10 and #16):
+
+```bash
+PROFILE_ROOT=$(wpl profile whoami --print-root)
+```
+
+All file paths below should be expressed relative to `$PROFILE_ROOT` (e.g. `$PROFILE_ROOT/session/current-session.json`). Subprocesses launched by this skill (`handoff.py`, `transition.py`) inherit the session's environment and run their own path-based resolution — no extra plumbing needed.
+
 ## Procedure
 
 ### Step 1: Finalize open tasks
@@ -100,7 +110,7 @@ Unlike the Linear/Slack drafts (which are one-shot posts to external systems), t
 
 1. Read final session state:
    ```bash
-   SESSION_JSON=$(cat ~/.workplanner/profiles/active/session/current-session.json)
+   SESSION_JSON=$(cat "$PROFILE_ROOT/session/current-session.json")
    ```
 
    (The skill runs after tasks are finalized, so `deferred`/`blocked` statuses are accurate.)
