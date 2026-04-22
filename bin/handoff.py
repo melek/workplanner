@@ -47,6 +47,7 @@ from pathlib import Path
 # Import minimally from transition.py (same dir) so we share profile
 # resolution and timezone logic. Avoid importing anything that mutates state.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import transition  # noqa: E402
 from transition import (  # noqa: E402
     resolve_paths,
     load_config,
@@ -417,6 +418,19 @@ def main():
         prog="handoff.py",
         description="workplanner local handoff doc read/write.",
     )
+    # Mirror transition.py's top-level --profile so skills invoking this
+    # script directly (as a subprocess, not via `wpl`) can forward the
+    # parent's resolved profile. When absent, we fall back to the usual
+    # precedence chain ($WPL_PROFILE env → cwd-based match → fallback).
+    parser.add_argument(
+        "--profile",
+        dest="profile_override",
+        type=str,
+        default=None,
+        help="Override profile resolution for this invocation. Matches "
+             "`wpl --profile NAME`. When absent, $WPL_PROFILE and "
+             "path-based resolution apply.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     w = sub.add_parser("write", help="Write or update today's handoff for a session.")
@@ -438,6 +452,11 @@ def main():
     p.set_defaults(func=_cmd_path)
 
     args = parser.parse_args()
+    # Propagate --profile into transition.py's module-level override so
+    # resolve_paths() picks it up. Env var ($WPL_PROFILE) already works
+    # for free via the import-time initialisation there.
+    if getattr(args, "profile_override", None):
+        transition.PROFILE_OVERRIDE = args.profile_override
     args.func(args)
 
 
