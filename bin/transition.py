@@ -35,6 +35,45 @@ WPL_ROOT = Path(os.environ["WPL_ROOT"]) if os.environ.get("WPL_ROOT") else Path.
 PROFILE_OVERRIDE = None
 
 
+def resolved_via_source():
+    """Describe how the current process resolved its profile.
+
+    Returns one of: "cli-flag", "env-var", "cwd-match",
+    "single-profile-fallback", or "unresolved". Mirrors the precedence
+    ladder in `resolve_profile_root()` without re-running any side
+    effects. Surfaced in JSON responses (finding 8) and in the --profile
+    breadcrumb printed to stdout when an override is active.
+    """
+    if PROFILE_OVERRIDE:
+        return "cli-flag"
+    if os.environ.get("WPL_PROFILE", "").strip():
+        return "env-var"
+    cwd = _normalize_path(os.getcwd())
+    matched, _ = _resolve_by_cwd(cwd)
+    if matched is not None:
+        return "cwd-match"
+    all_profiles = list(_iter_profile_dirs())
+    if len(all_profiles) == 1 and not _profile_workspaces(all_profiles[0]):
+        return "single-profile-fallback"
+    return "unresolved"
+
+
+def resolved_via_human(source):
+    """Human-readable label for the breadcrumb line.
+
+    Distinct from `resolved_via_source()` because the stdout line uses
+    prose ("via --profile flag") while the JSON field uses a stable
+    machine identifier ("cli-flag").
+    """
+    return {
+        "cli-flag": "via --profile flag",
+        "env-var": "via $WPL_PROFILE",
+        "cwd-match": "via cwd match",
+        "single-profile-fallback": "via single-profile fallback",
+        "unresolved": "unresolved",
+    }.get(source, source)
+
+
 def _normalize_path(raw):
     """Return the absolute, symlink-resolved form of a path string.
 
@@ -1101,6 +1140,16 @@ def _status_payload(session, config=None):
     # load_session() already emitted.
     is_stale, offset_days = session_staleness(session, config)
 
+    # Profile resolution breadcrumb for JSON consumers. An LLM
+    # inspecting profile B with `wpl --profile other status` then
+    # forgetting to re-assert the override on a follow-up mutation
+    # can land writes on the cwd-resolved profile; `profile_name` and
+    # `resolved_via` let the consumer detect that gap programmatically.
+    try:
+        profile_name = resolve_paths().PROFILE_NAME
+    except SystemExit:
+        profile_name = None
+
     return {
         "date": today.isoformat(),
         "session_date": session.get("date"),
@@ -1109,6 +1158,8 @@ def _status_payload(session, config=None):
         "timezone": tz_name,
         "eod_target": eod,
         "checkpoint": session.get("checkpoint"),
+        "profile_name": profile_name,
+        "resolved_via": resolved_via_source(),
         "current_task": current,
         "current_task_index": idx,
         "tasks": session_records(session),
@@ -1134,9 +1185,20 @@ def emit_mutation(action, session, affected=None, config=None, human_line=None):
     in text mode.
     """
     if OUTPUT_FORMAT == "json":
+        try:
+            profile_name = resolve_paths().PROFILE_NAME
+        except SystemExit:
+            profile_name = None
         payload = {
             "result": "ok",
             "action": action,
+            # `profile_name` and `resolved_via` at the top level make
+            # every mutation response self-describing — an LLM chaining
+            # `wpl --profile other status` with a follow-up mutation
+            # can verify the second call landed on the same profile
+            # (finding 8).
+            "profile_name": profile_name,
+            "resolved_via": resolved_via_source(),
             "affected": [
                 {"uid": t.get("uid"), "tid": tid(i), "title": t.get("title")}
                 for (i, t) in (affected or [])
@@ -2938,6 +3000,23 @@ def main():
     # over $WPL_PROFILE env var, which in turn wins over path-based
     # resolution. See resolve_profile_root().
     PROFILE_OVERRIDE = getattr(args, "profile_override", None) or None
+
+    # Profile breadcrumb: when an override is active (CLI flag or env
+    # var), prepend a one-line note to stdout so the LLM sees, in its
+    # own output, that this invocation landed on a non-cwd profile. JSON
+    # mode does the same via `profile_name` / `resolved_via` fields on
+    # every response; no extra stdout line there (would break JSON
+    # parsing). See issue #18, finding 8.
+    if OUTPUT_FORMAT == "text":
+        source = resolved_via_source()
+        if source in ("cli-flag", "env-var"):
+            try:
+                profile_name = resolve_paths().PROFILE_NAME
+            except SystemExit:
+                profile_name = None
+            if profile_name:
+                print(f"(profile: {profile_name} — {resolved_via_human(source)})")
+
     handler = DISPATCH.get(args.command)
     if handler:
         handler(args)
