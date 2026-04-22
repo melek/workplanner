@@ -554,17 +554,75 @@ def local_today(config=None):
     return datetime.now(ZoneInfo(tz_name)).date()
 
 
+# Module-level flag so the stale-session warning fires at most once per
+# process, no matter how many times load_session() is called within a
+# single invocation.
+_STALE_SESSION_WARNED = False
+
+
+def session_staleness(session, config=None):
+    """Return (is_stale, offset_days) for a loaded session.
+
+    `offset_days` is positive when the session's date is older than
+    today (the common case), negative if somehow ahead. Missing or
+    unparseable `date` returns (False, 0) — no noise, nothing to warn
+    about. "Stale" means offset_days >= 1.
+    """
+    date_str = (session or {}).get("date")
+    if not date_str:
+        return False, 0
+    try:
+        session_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return False, 0
+    today = local_today(config)
+    offset = (today - session_date).days
+    return offset >= 1, offset
+
+
 def load_session():
+    """Load current-session.json for the resolved profile.
+
+    On miss, fails with a recovery hint that names `/workplanner:start`
+    so an LLM hitting a clean profile knows the next step (issue #18).
+    On stale session (date older than today), emits a one-line stderr
+    warning — once per process — but does not block. Callers that want
+    the staleness state programmatically can call `session_staleness()`.
+    """
+    global _STALE_SESSION_WARNED
     paths = resolve_paths()
     try:
         with open(paths.SESSION) as f:
             session = json.load(f)
     except FileNotFoundError:
-        fail("No session file found.")
+        fail(
+            "No session file found. Run /workplanner:start to build today's agenda.",
+            next_action="/workplanner:start",
+        )
     except json.JSONDecodeError as e:
         fail(f"Session JSON parse error: {e}")
     if backfill_uids(session):
         save_session(session, undo=False)
+    # Stale-session warning. Fires once per process; the command still
+    # runs (graceful degradation). Emitted to stderr regardless of
+    # output format — stderr is a separate channel, so JSON consumers
+    # parsing stdout are unaffected. JSON consumers also get `is_stale`
+    # and `session_date_offset_days` on the status payload for
+    # programmatic detection.
+    if not _STALE_SESSION_WARNED:
+        try:
+            is_stale, offset = session_staleness(session, load_config())
+        except SystemExit:
+            is_stale, offset = False, 0
+        if is_stale:
+            _STALE_SESSION_WARNED = True
+            date_str = session.get("date", "(unknown)")
+            noun = "day" if offset == 1 else "days"
+            print(
+                f"warning: session is from {date_str} ({offset} {noun} old). "
+                f"Run /workplanner:start to open today's session.",
+                file=sys.stderr,
+            )
     return session
 
 
@@ -620,10 +678,12 @@ def render():
     subprocess.run([sys.executable, str(RENDER)], capture_output=True, env=env)
 
 
-def fail(msg):
+def fail(msg, **extra):
     # Route through emit_error so JSON mode emits structured errors.
-    # Falls back to the historical "error: ..." line in text mode.
-    emit_error(msg)
+    # Falls back to the historical "error: ..." line in text mode. Extra
+    # kwargs (e.g. next_action=...) are attached to the JSON error object;
+    # they're ignored in text mode so the human-facing line stays clean.
+    emit_error(msg, **extra)
 
 
 def now_hhmm():
@@ -1017,8 +1077,16 @@ def _status_payload(session, config=None):
 
     current = _task_record(idx, task) if task else None
 
+    # Staleness: expose programmatically so JSON consumers can detect a
+    # day-old session without hunting through stderr for the warning
+    # load_session() already emitted.
+    is_stale, offset_days = session_staleness(session, config)
+
     return {
         "date": today.isoformat(),
+        "session_date": session.get("date"),
+        "is_stale": is_stale,
+        "session_date_offset_days": offset_days,
         "timezone": tz_name,
         "eod_target": eod,
         "checkpoint": session.get("checkpoint"),
