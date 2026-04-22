@@ -95,6 +95,26 @@ def test_calendar_fallback_gated_in_assembly_doc():
                      "calendar: gate language (assembly doc)")
 
 
+def test_dashboard_pane_policy_referenced():
+    """Dashboard Pane section must read config.dashboard_pane and branch on auto/always/never."""
+    text = _read(START_SKILL)
+    _assert_contains(text, "config.dashboard_pane",
+                     "dashboard_pane: config field reference")
+    _assert_contains(text, '"auto"', "dashboard_pane: auto value")
+    _assert_contains(text, '"always"', "dashboard_pane: always value")
+    _assert_contains(text, '"never"', "dashboard_pane: never value")
+
+
+def test_dashboard_pane_never_skips_spawn():
+    """The 'never' branch must explicitly skip pane-spawn."""
+    text = _read(START_SKILL)
+    # The case branch for never should not call split-window.
+    # A minimal structural check: the never branch description mentions
+    # skipping spawn.
+    _assert_contains(text, "never spawn the pane",
+                     "dashboard_pane: never branch language")
+
+
 def main():
     tests = [
         test_pre_work_no_task_insertion,
@@ -103,6 +123,8 @@ def main():
         test_calendar_fallback_gated,
         test_calendar_fallback_gated_in_runbooks,
         test_calendar_fallback_gated_in_assembly_doc,
+        test_dashboard_pane_policy_referenced,
+        test_dashboard_pane_never_skips_spawn,
     ]
     failures = 0
     for t in tests:

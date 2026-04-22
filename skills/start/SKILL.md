@@ -28,7 +28,11 @@ All paths in this skill should be expressed relative to `$PROFILE_ROOT`. Subproc
 
 ## Dashboard Pane (every invocation)
 
-Before routing, ensure the tmux dashboard pane is running. This runs on **every** `/start` invocation — not just during assembly.
+Before routing, ensure the tmux dashboard pane is running according to the profile's policy. Wrapper installation and dashboard-view re-render always happen — they cost nothing and are useful for non-tmux coordination (dashboards can be tailed from other terminals). Pane spawning is gated on `config.dashboard_pane`:
+
+- `"auto"` (default): spawn the pane if `$TMUX` is set and no `workplan`-titled pane already exists.
+- `"never"`: never spawn the pane, even in tmux. Wrappers and dashboard-view re-render still happen.
+- `"always"`: attempt to spawn even outside tmux. If `$TMUX` is unset, log a one-line note and proceed.
 
 ```bash
 # Ensure wrappers exist at ~/.workplanner/bin/ (persistent, user-scoped).
@@ -36,17 +40,39 @@ Before routing, ensure the tmux dashboard pane is running. This runs on **every*
 # we also run it explicitly here for the render wrapper and tmux setup.
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" status > /dev/null 2>&1
 
-if [ -n "$TMUX" ]; then
-  # Re-render dashboard-view.txt from current session state
-  wpl-render
+# Read config.dashboard_pane (default "auto") via `wpl config get dashboard_pane`,
+# or parse config.json directly. Absent or unrecognized value → treat as "auto".
+DASHBOARD_PANE_POLICY="auto"  # replace with the resolved config value
 
-  # Open pane if not already running
-  if ! tmux list-panes -F '#{pane_title}' 2>/dev/null | grep -q 'workplan'; then
-    tmux split-window -vb -l 15 "python3 ${CLAUDE_PLUGIN_ROOT}/bin/dashboard_tui.py"
-    tmux select-pane -t '{top}' -T 'workplan'
-    tmux select-pane -t '{bottom}'
-  fi
-fi
+case "$DASHBOARD_PANE_POLICY" in
+  never)
+    # Skip pane-spawn entirely. Still re-render the view so the file stays
+    # current for any external readers.
+    wpl-render
+    ;;
+  always)
+    wpl-render
+    if [ -z "$TMUX" ]; then
+      echo "dashboard_pane=always but not inside tmux — skipping spawn."
+    else
+      if ! tmux list-panes -F '#{pane_title}' 2>/dev/null | grep -q 'workplan'; then
+        tmux split-window -vb -l 15 "python3 ${CLAUDE_PLUGIN_ROOT}/bin/dashboard_tui.py"
+        tmux select-pane -t '{top}' -T 'workplan'
+        tmux select-pane -t '{bottom}'
+      fi
+    fi
+    ;;
+  auto|*)
+    if [ -n "$TMUX" ]; then
+      wpl-render
+      if ! tmux list-panes -F '#{pane_title}' 2>/dev/null | grep -q 'workplan'; then
+        tmux split-window -vb -l 15 "python3 ${CLAUDE_PLUGIN_ROOT}/bin/dashboard_tui.py"
+        tmux select-pane -t '{top}' -T 'workplan'
+        tmux select-pane -t '{bottom}'
+      fi
+    fi
+    ;;
+esac
 ```
 
 The `wpl` and `wpl-render` wrappers live at `~/.workplanner/bin/` — persistent across reboots, co-located with the data they operate on. They contain the resolved plugin path and self-heal on every invocation. Legacy symlinks at `/tmp/wp` are maintained for backward compatibility.
@@ -59,7 +85,7 @@ wpl-render
 
 If `~/.workplanner/bin` is on the user's PATH, these short forms work directly.
 
-If not in tmux, the wrappers are still created (useful for cross-session coordination), but the dashboard pane is skipped.
+Rationale: a user can be in tmux but not want the dashboard pane (screen real-estate, prefer a side terminal, screen-recording). `"auto"` preserves today's behavior; `"never"` is the opt-out without leaving tmux; `"always"` exists for users whose terminals split outside of tmux or who want the pane spawn attempt to happen regardless of ambient state.
 
 ## Pre-flight Checks
 

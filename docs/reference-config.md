@@ -51,6 +51,7 @@ Located at `~/.workplanner/profiles/<name>/config.json`. Each profile has its ow
   ],
   "timezone": "America/New_York",
   "eod_target": "17:30",
+  "dashboard_pane": "auto",
 
   "linear_user_id": "uuid-from-linear-settings",
   "linear_teams": ["ENG", "PLATFORM"],
