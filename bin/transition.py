@@ -1628,6 +1628,22 @@ def cmd_backlog(args):
     if args.from_task or args.from_current:
         _backlog_from_session(args)
         return
+    # Foot-gun check: `wpl backlog list` (and common aliases) is a
+    # natural reach for anyone fluent in git/kubectl/linear-cli shape.
+    # The existing routing would silently add a task titled "list"
+    # instead. Redirect only when the *entire* title is the conflicting
+    # word — a multi-word title that starts with "list" (e.g.
+    # "list of onboarding tasks") still passes through. See issue #18,
+    # finding 7.
+    _SUBCOMMAND_ALIASES = {"list", "ls", "show"}
+    title_parts = getattr(args, "title", None) or []
+    if len(title_parts) == 1 and title_parts[0] in _SUBCOMMAND_ALIASES:
+        emit_error(
+            f"'wpl backlog {title_parts[0]}' is not a subcommand; "
+            f"did you mean 'wpl backlog --list'?",
+            suggestion="wpl backlog --list",
+            typed=title_parts[0],
+        )
     # Default: add new item
     _backlog_add(args)
 
@@ -2691,7 +2707,10 @@ def build_parser():
     p_backlog.add_argument("--tag", type=str, action="append", default=None, help="Tag (repeatable).")
     p_backlog.add_argument("--from", dest="from_task", type=str, default=None, help="Move session task to backlog (t3, index, or uid).")
     p_backlog.add_argument("--from-current", action="store_true", help="Move current task to backlog.")
-    p_backlog.add_argument("--list", dest="list_items", action="store_true", help="List backlog items.")
+    p_backlog.add_argument("--list", dest="list_items", action="store_true",
+                           help="List backlog items (use this flag rather than "
+                                "a `list` subcommand — `wpl backlog list` has no "
+                                "subcommand form).")
     p_backlog.add_argument("--promote", type=str, default=None, help="Promote backlog item to today's session (uid).")
     p_backlog.add_argument("--drop", type=str, default=None, help="Remove backlog item (uid).")
     p_backlog.add_argument("--edit", type=str, default=None, help="Edit backlog item fields (uid).")
