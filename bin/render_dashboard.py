@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-WPL_ROOT = Path.home() / ".workplanner"
+WPL_ROOT = Path(os.environ["WPL_ROOT"]) if os.environ.get("WPL_ROOT") else Path.home() / ".workplanner"
 
 
 def resolve_active_profile():
