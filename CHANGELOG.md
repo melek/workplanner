@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.0.0-beta.4
+
+Session-tidy release — each change is a small, self-contained PR guided by the plugin's seven methodology principles and the three-layer architecture. Six merged PRs (#22, #24, #26, #28, #30, #32) over issues #21, #23, #25, #27, #29, #31.
+
 ### Added
 
 - **Path-based profile resolution** (issue #10) — Profiles declare which filesystem paths they serve via a `workspaces: [...]` field in `config.json`. Each `wpl` invocation picks a profile by longest-prefix match of cwd against those workspaces, eliminating the race where concurrent sessions in different profiles flipped the `active` symlink out from under each other. Escape hatches: `--profile NAME` CLI flag and `$WPL_PROFILE` env var. Single-profile setups without workspaces keep working via fallback. See `docs/profiles.md`.
