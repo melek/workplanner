@@ -2496,6 +2496,110 @@ def cmd_config(args):
 # ── CLI ──────────────────────────────────────────────────────────────
 
 
+# Verbs that intentionally take no task-target positional: they operate
+# only on the current task (the "two bookends" semantics). When the LLM
+# reaches for `wpl done t3`, we short-circuit argparse with a redirect
+# rather than letting it surface `unrecognized arguments: t3` (done /
+# defer) or silently swallow `t3` as a blocking reason (blocked).
+_CURRENT_TASK_VERBS = {"done", "blocked", "defer"}
+
+
+def _looks_like_task_target(token):
+    """True iff `token` plausibly names a task (tN or 8-char hex uid).
+
+    Deliberately conservative: we only want to redirect the LLM when it
+    clearly mis-aimed a task at a current-only verb. A blocked reason
+    like "blocked on 3 tests" must pass through unchanged — bare
+    integers are NOT flagged.
+    """
+    if not token or token.startswith("-"):
+        return False
+    if token.startswith("t") and len(token) > 1 and token[1:].isdigit():
+        return True
+    # 8-char hex uid — mirrors generate_uid().
+    if len(token) == 8 and all(c in "0123456789abcdef" for c in token):
+        return True
+    return False
+
+
+def _intercept_current_task_verb_misuse(argv):
+    """Redirect `wpl {done,blocked,defer} tN` to the switch-then-verb pattern.
+
+    Walks argv looking for (optional) global flags, then the subcommand.
+    If the subcommand is a current-task verb and any following
+    positional is a task target, emit a structured error and exit.
+    Does not widen the verb surface — this is purely a diagnostic
+    redirect.
+    """
+    i = 0
+    # Skip global flags known to take a value or be a boolean switch.
+    while i < len(argv):
+        tok = argv[i]
+        if tok in ("--format", "--profile"):
+            i += 2
+            continue
+        if tok.startswith("--format=") or tok.startswith("--profile="):
+            i += 1
+            continue
+        if tok in ("-h", "--help"):
+            # Let argparse handle help.
+            return
+        break
+    if i >= len(argv):
+        return
+    verb = argv[i]
+    if verb not in _CURRENT_TASK_VERBS:
+        return
+    # Scan subsequent tokens for a mis-aimed task target. Stop at
+    # recognised verb-local flags so `wpl defer --until friday` isn't
+    # second-guessed and so `wpl blocked --reason ...` style usage
+    # (should it ever land) isn't confused.
+    for token in argv[i + 1:]:
+        if token.startswith("-"):
+            # Any flag ends the scan. Argparse handles flag validation.
+            return
+        if _looks_like_task_target(token):
+            # Text vs JSON: emit_error handles the branching. Exit 1
+            # preserves the "precondition failure" contract for every
+            # wpl error path.
+            # Need OUTPUT_FORMAT set before emit_error is used; peek at
+            # global flags we already skipped.
+            global OUTPUT_FORMAT
+            OUTPUT_FORMAT = _peek_output_format(argv) or "text"
+            # Per-verb phrasing so the "different task" sentence reads
+            # naturally in english. All three map to the same pattern:
+            # switch to the target first, then run the current-task verb.
+            phrasing = {
+                "done": "mark a different task done",
+                "blocked": "mark a different task blocked",
+                "defer": "defer a different task",
+            }[verb]
+            emit_error(
+                f"'{verb}' operates on the current task only (no task target). "
+                f"To {phrasing}, run: wpl switch {token} && wpl {verb}",
+                verb=verb,
+                target=token,
+                suggestion=f"wpl switch {token} && wpl {verb}",
+            )
+    # No mis-aimed target found — let argparse proceed normally.
+    return
+
+
+def _peek_output_format(argv):
+    """Return the --format value from argv, or None. Pre-parse helper.
+
+    Called before argparse runs so errors emitted during the pre-parse
+    hook can honour --format json. Doesn't validate — an invalid value
+    just falls through to the argparse default path.
+    """
+    for i, tok in enumerate(argv):
+        if tok == "--format" and i + 1 < len(argv):
+            return argv[i + 1]
+        if tok.startswith("--format="):
+            return tok.split("=", 1)[1]
+    return None
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="transition.py",
@@ -2792,6 +2896,19 @@ def main():
         print("You can remove it after verifying everything works.")
 
     ensure_wrapper()
+
+    # Pre-parse hook: catch the common "verbs operate on current task only"
+    # footgun before argparse does. `done`, `blocked`, and `defer` take no
+    # task-target positional — they operate on whatever `current_task_index`
+    # points at. Argparse's default message (`unrecognized arguments: t3`,
+    # or silent acceptance for `blocked` where extras become the reason)
+    # doesn't tell the LLM how to recover. Redirect to the documented
+    # two-step pattern instead. Detection is conservative: only `tN`
+    # (digits after t) or an 8-char hex uid is treated as a mis-aimed
+    # task target. Real `blocked` reasons that happen to contain numbers
+    # still pass through untouched. See issue #18, finding 5.
+    _intercept_current_task_verb_misuse(sys.argv[1:])
+
     parser = build_parser()
     args = parser.parse_args()
     # Set module-level output format for this invocation so commands can
