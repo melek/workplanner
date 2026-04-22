@@ -603,8 +603,21 @@ def save_session(session, undo=True):
 
 
 def render():
-    """Re-render dashboard after mutation."""
-    subprocess.run([sys.executable, str(RENDER)], capture_output=True)
+    """Re-render dashboard after mutation.
+
+    Threads the resolved profile name through to the subprocess via
+    $WPL_PROFILE so render_dashboard.py reads/writes the same profile
+    this invocation mutated — not whatever the `active` symlink happens
+    to point at. Fixes the split-brain described in issue #16.
+    """
+    env = dict(os.environ)
+    try:
+        env["WPL_PROFILE"] = resolve_paths().PROFILE_NAME
+    except SystemExit:
+        # Resolution failed (no profile), let the subprocess inherit
+        # whatever ambient env says; it handles missing-profile itself.
+        pass
+    subprocess.run([sys.executable, str(RENDER)], capture_output=True, env=env)
 
 
 def fail(msg):
@@ -2045,6 +2058,18 @@ def cmd_profile(args):
 
     elif sub == "whoami":
         cwd = _normalize_path(os.getcwd())
+        print_root = getattr(args, "print_root", False)
+        print_name = getattr(args, "print_name", False)
+        # --print-root / --print-name short-circuits to a single line,
+        # suitable for shell substitution. Exits non-zero (via fail())
+        # when resolution fails so callers can guard with `|| exit 0`.
+        if print_root or print_name:
+            target = resolve_profile_root()  # fails loudly if unresolved
+            if print_root:
+                print(str(target))
+            else:
+                print(target.name)
+            return
         override = PROFILE_OVERRIDE or os.environ.get("WPL_PROFILE", "").strip() or None
         if override:
             target = _find_profile_by_name(override)
@@ -2463,9 +2488,17 @@ def build_parser():
         "disassociate", help="Remove a workspace path from a profile")
     p_disassoc.add_argument("name", help="Profile name")
     p_disassoc.add_argument("path", help="Absolute path to remove")
-    profile_sub.add_parser(
+    p_whoami = profile_sub.add_parser(
         "whoami",
         help="Show which profile the current cwd resolves to, and how.")
+    p_whoami.add_argument(
+        "--print-root", action="store_true",
+        help="Print only the resolved profile root path (absolute). "
+             "Useful from shell scripts that need the concrete directory "
+             "without parsing the full whoami output.")
+    p_whoami.add_argument(
+        "--print-name", action="store_true",
+        help="Print only the resolved profile name (no directory).")
     profile_sub.add_parser(
         "validate",
         help="Check for workspace overlaps and missing-workspace warnings.")

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Render the workplanner dashboard from current-session.json.
 
-Reads ~/.workplanner/profiles/active/session/current-session.json and
-~/.workplanner/profiles/active/config.json, writes
-~/.workplanner/profiles/active/session/dashboard-view.txt (atomic: .tmp then mv).
+Resolves the target profile using the same precedence chain as
+transition.py (CLI flag / $WPL_PROFILE / cwd-based match), falling back
+to the legacy ``active`` symlink only for manual invocations from a
+path that no profile claims. Writes dashboard-view.txt (atomic: .tmp
+then mv) under the resolved profile root.
 
 Python 3.9+ stdlib only.
 """
@@ -20,13 +22,74 @@ from pathlib import Path
 WPL_ROOT = Path(os.environ["WPL_ROOT"]) if os.environ.get("WPL_ROOT") else Path.home() / ".workplanner"
 
 
-def resolve_active_profile():
+# Import profile resolution from transition.py so render_dashboard.py honours
+# the same precedence chain (CLI flag / $WPL_PROFILE / cwd-based match) rather
+# than blindly following the `active` symlink. This is the split-brain fix
+# from issue #16: the parent `wpl` invocation may have resolved profile A via
+# cwd, but if we read `active` here we render dashboard for profile B.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from transition import (  # noqa: E402
+        resolve_profile_root as _transition_resolve_profile_root,
+        _find_profile_by_name,
+        _resolve_by_cwd,
+        _iter_profile_dirs,
+        _profile_workspaces,
+        _normalize_path,
+    )
+    _HAS_TRANSITION = True
+except ImportError:
+    _HAS_TRANSITION = False
+
+
+def _active_symlink_fallback():
+    """Last-resort: the `active` symlink. Used only when path-based resolution
+    fails and no override is in scope. Preserves backward-compat with manual
+    invocations outside any declared workspace."""
     active = WPL_ROOT / "profiles" / "active"
     if active.is_symlink() and active.resolve().is_dir():
         return active.resolve()
     if active.is_dir() and not active.is_symlink():
         return active
     return None
+
+
+def resolve_active_profile():
+    """Resolve the target profile, matching transition.py's precedence.
+
+    Order:
+      1. ``$WPL_PROFILE`` env var (set by ``transition.py::render()`` before
+         spawning us as a subprocess, or set by the user for their shell).
+      2. Path-based match against each profile's declared ``workspaces``.
+      3. Single-profile-without-workspaces fallback.
+      4. Legacy ``active`` symlink — kept so manual invocations from an
+         unassociated cwd don't break.
+    """
+    # (1) env var override — parent `wpl` invocation threads its resolved
+    #     profile name through to us this way.
+    override = os.environ.get("WPL_PROFILE", "").strip() or None
+    if override and _HAS_TRANSITION:
+        target = _find_profile_by_name(override)
+        if target is not None:
+            return target
+        # Fall through: a bad override name shouldn't silently fall through
+        # to the wrong profile — but we also don't want to crash the render,
+        # which is called as a side-effect of every mutation. Let the next
+        # tier handle it; worst case we render the legacy active.
+
+    # (2) cwd-based path match
+    if _HAS_TRANSITION:
+        matched, _ws = _resolve_by_cwd()
+        if matched is not None:
+            return matched
+
+        # (3) single-profile fallback (mirror transition.py)
+        all_profiles = list(_iter_profile_dirs())
+        if len(all_profiles) == 1 and not _profile_workspaces(all_profiles[0]):
+            return all_profiles[0]
+
+    # (4) legacy symlink fallback
+    return _active_symlink_fallback()
 
 
 def get_paths():
@@ -522,11 +585,13 @@ def render(session, config=None, idle_periods=None):
         header_date = date_str
 
     now_clock = datetime.now().strftime("%H:%M")
-    # Append active profile name if available
+    # Append resolved profile name to the header. Uses the same resolver
+    # the rest of this module uses (not the `active` symlink) so the
+    # header reflects whichever profile's state we actually rendered.
     profile_name = ""
-    active_link = WPL_ROOT / "profiles" / "active"
-    if active_link.is_symlink() and active_link.resolve().is_dir():
-        profile_name = f" [{active_link.resolve().name}]"
+    resolved = resolve_active_profile()
+    if resolved is not None:
+        profile_name = f" [{resolved.name}]"
     header = f" WORKPLAN  {header_date} \u2014 {week}{profile_name}"
     cols = int(os.environ.get("COLUMNS", 0)) or shutil.get_terminal_size((50, 24)).columns
     pad = max(0, cols - len(header) - len(now_clock))

@@ -1,9 +1,28 @@
 #!/bin/bash
 # Workplanner session hook — injects active workplan context into any Claude Code session.
 # Registered automatically via plugin.json hooks when the plugin is enabled.
+#
+# Profile resolution: this hook runs at SessionStart with no active `wpl`
+# invocation, so we defer to `wpl` itself (which does path-based cwd
+# resolution). This fixes the split-brain described in issue #16: the
+# hook's cwd is the session's cwd, which is what path-based resolution
+# keys off anyway, so the right profile is selected automatically. The
+# hardcoded `profiles/active/...` path is gone.
 
-SESSION="$HOME/.workplanner/profiles/active/session/current-session.json"
+WPL_BIN="${WPL_BIN:-$HOME/.workplanner/bin/wpl}"
+if [ ! -x "$WPL_BIN" ]; then
+    WPL_BIN=$(command -v wpl 2>/dev/null || true)
+fi
+[ -n "${WPL_BIN:-}" ] && [ -x "$WPL_BIN" ] || exit 0
 
+# Resolve the profile root once via `wpl`. If resolution fails (no profile
+# associated with cwd, no fallback match), silently exit — nothing to inject.
+# `WPL_CHILD=1` suppresses the interactive first-run prompt since there's no
+# TTY here.
+PROFILE_ROOT=$(WPL_CHILD=1 "$WPL_BIN" profile whoami --print-root 2>/dev/null)
+[ -n "$PROFILE_ROOT" ] || exit 0
+
+SESSION="$PROFILE_ROOT/session/current-session.json"
 [ -f "$SESSION" ] || exit 0
 
 # Quick validation — must be today's session and not closed
