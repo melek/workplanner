@@ -113,6 +113,7 @@ Created during first-run setup. Persists across sessions.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `schema_version` | `integer` | yes | Current: `2`. |
+| `workspaces` | `array` of `string` | no | Absolute filesystem paths this profile serves. Drives path-based profile resolution (see `docs/profiles.md`). Entries are normalized via `~` expansion + `os.path.realpath` on write. Profiles with no `workspaces` declared fall back to single-profile resolution (if they're the only profile) or require `--profile`/`$WPL_PROFILE` override. Overlaps between profiles (identical paths) are rejected at write time; proper-prefix overlaps are allowed and resolved by longest-match-wins. |
 | `timezone` | `string` | yes | IANA timezone identifier, e.g. `"Europe/Paris"`. Used by `transition.py` (`local_today()`) and morning assembly to anchor all date comparisons to the user's local calendar date. |
 | `eod_target` | `string` (HH:MM) | yes | Default end-of-day target time. |
 | `protected_blocks` | `array` | no | Time blocks that should not be scheduled over. |

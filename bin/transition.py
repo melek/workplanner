@@ -20,25 +20,361 @@ from zoneinfo import ZoneInfo
 WPL_ROOT = Path(os.environ["WPL_ROOT"]) if os.environ.get("WPL_ROOT") else Path.home() / ".workplanner"
 
 
-def resolve_profile_root():
-    """Resolve the active profile directory via symlink."""
-    active = WPL_ROOT / "profiles" / "active"
-    if active.is_symlink():
-        resolved = active.resolve()
-        if resolved.is_dir():
-            return resolved
-        # Broken symlink — fall through to single-profile fallback
-    elif active.is_dir():
-        return active
-    # Fallback: if no active symlink, check for a single profile
+# ── Profile resolution ──────────────────────────────────────────────
+#
+# Profile selection is path-based: each profile declares which filesystem
+# paths it serves via its config.json "workspaces: [...]" list. The cwd
+# determines the profile by longest-prefix match, with no consultation of
+# the global `active` symlink. This eliminates the race where concurrent
+# sessions in different profiles clobber each other via symlink flips
+# (issue #10). Escape hatches: `--profile NAME` CLI flag, `WPL_PROFILE`
+# env var, and a single-profile-without-workspaces fallback.
+
+# Set by main() from the top-level --profile flag, if provided. Overrides
+# env-var and path-based resolution.
+PROFILE_OVERRIDE = None
+
+
+def _normalize_path(raw):
+    """Return the absolute, symlink-resolved form of a path string.
+
+    `~` is expanded; the path is not required to exist (realpath handles
+    missing components on modern systems). Used both for cwd and for
+    workspace paths declared in profile configs.
+    """
+    return os.path.realpath(os.path.expanduser(str(raw)))
+
+
+def _path_is_prefix(prefix, path):
+    """True iff `path` equals `prefix` or is nested under it.
+
+    Uses path-component matching so `/foo/bar` does NOT match `/foo/barn`.
+    Both arguments should already be normalized via `_normalize_path`.
+    """
+    if prefix == path:
+        return True
+    # Ensure the prefix ends with the separator so we compare components,
+    # not substring bytes. `/` is already separator-terminated in effect.
+    if prefix.endswith(os.sep):
+        return path.startswith(prefix)
+    return path.startswith(prefix + os.sep)
+
+
+def _iter_profile_dirs():
+    """Yield profile directory Paths, skipping the `active` alias."""
     profiles_dir = WPL_ROOT / "profiles"
-    if profiles_dir.is_dir():
-        candidates = [d for d in profiles_dir.iterdir()
-                      if d.is_dir() and d.name != "active"]
-        if len(candidates) == 1:
-            return candidates[0]
-    fail(f"No active profile. Run /workplanner:start to set up, "
-         f"or create one with: wpl profile create <name>")
+    if not profiles_dir.is_dir():
+        return
+    for d in sorted(profiles_dir.iterdir()):
+        if d.is_dir() and d.name != "active":
+            yield d
+
+
+def _read_profile_config(profile_dir):
+    """Load `config.json` for a profile, returning `{}` on any failure.
+
+    Used by profile-resolution code that can't call `load_config()` (which
+    itself depends on profile resolution — circular).
+    """
+    try:
+        with open(profile_dir / "config.json") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _profile_workspaces(profile_dir):
+    """Return the normalized `workspaces: [...]` list for a profile.
+
+    Non-string entries are skipped silently; the validator (`wpl profile
+    validate`, not implemented in this pass) would surface the problem.
+    """
+    cfg = _read_profile_config(profile_dir)
+    raw = cfg.get("workspaces") or []
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for entry in raw:
+        if not isinstance(entry, str) or not entry.strip():
+            continue
+        out.append(_normalize_path(entry))
+    return out
+
+
+def _detect_workspace_overlaps():
+    """Return a list of (path, [profile_name, ...]) for duplicate workspace claims.
+
+    Two profiles claiming the *identical* workspace path is an
+    unresolvable ambiguity. Proper-prefix cases are intentional
+    (longest-match wins) and are not reported here.
+    """
+    by_path = {}
+    for d in _iter_profile_dirs():
+        for ws in _profile_workspaces(d):
+            by_path.setdefault(ws, []).append(d.name)
+    return [(path, names) for path, names in sorted(by_path.items())
+            if len(names) > 1]
+
+
+def _resolve_by_cwd(cwd=None):
+    """Longest-prefix match of cwd against declared workspaces.
+
+    Returns (profile_dir, matched_workspace_path) or (None, None).
+    """
+    if cwd is None:
+        cwd = _normalize_path(os.getcwd())
+    best = None  # (length, profile_dir, workspace_path)
+    for d in _iter_profile_dirs():
+        for ws in _profile_workspaces(d):
+            if _path_is_prefix(ws, cwd):
+                # Length ranks by string length; since all are normalized
+                # absolute paths, longer string = deeper path.
+                if best is None or len(ws) > best[0]:
+                    best = (len(ws), d, ws)
+    if best is None:
+        return None, None
+    return best[1], best[2]
+
+
+def _find_profile_by_name(name):
+    """Return the profile directory for `name`, or None."""
+    candidate = WPL_ROOT / "profiles" / name
+    if candidate.is_dir() and candidate.name != "active":
+        return candidate
+    return None
+
+
+def _first_run_prompt(cwd):
+    """Interactive prompt when cwd isn't associated with any profile.
+
+    Returns the resolved profile directory (after association/creation) or
+    None if the user cancels. Called only when stdin is a TTY and
+    $WPL_CHILD != "1".
+    """
+    print(f"Current directory '{cwd}' isn't associated with any profile.",
+          file=sys.stderr)
+    existing = [d.name for d in _iter_profile_dirs()]
+    if existing:
+        print("", file=sys.stderr)
+        print("Existing profiles:", file=sys.stderr)
+        for name in existing:
+            wss = _profile_workspaces(WPL_ROOT / "profiles" / name)
+            if wss:
+                print(f"  - {name}: {', '.join(wss)}", file=sys.stderr)
+            else:
+                print(f"  - {name}: (no workspaces)", file=sys.stderr)
+        print("", file=sys.stderr)
+    print("Options:", file=sys.stderr)
+    print("  [1] Associate this directory with an existing profile",
+          file=sys.stderr)
+    print("  [2] Create a new profile here", file=sys.stderr)
+    print("  [3] Cancel", file=sys.stderr)
+    try:
+        choice = input("Choice [1/2/3]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+    if choice == "1":
+        if not existing:
+            print("No existing profiles to associate.", file=sys.stderr)
+            return None
+        try:
+            name = input(f"Profile name ({'/'.join(existing)}): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        target = _find_profile_by_name(name)
+        if target is None:
+            print(f"Profile '{name}' does not exist.", file=sys.stderr)
+            return None
+        # Check overlap before writing.
+        for d in _iter_profile_dirs():
+            if d.name == name:
+                continue
+            if cwd in _profile_workspaces(d):
+                print(f"Profile '{d.name}' already claims '{cwd}'. "
+                      f"Disassociate it first.", file=sys.stderr)
+                return None
+        _add_workspace_to_profile(target, cwd)
+        print(f"Associated '{cwd}' with profile '{name}'.", file=sys.stderr)
+        return target
+    elif choice == "2":
+        try:
+            name = input("New profile name: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if not name:
+            return None
+        if not (name.isidentifier() or name.replace("-", "").isalnum()):
+            print(f"Invalid profile name '{name}'.", file=sys.stderr)
+            return None
+        if _find_profile_by_name(name) is not None:
+            print(f"Profile '{name}' already exists.", file=sys.stderr)
+            return None
+        target = _create_profile(name, workspaces=[cwd])
+        print(f"Created profile '{name}' associated with '{cwd}'.",
+              file=sys.stderr)
+        return target
+    else:
+        return None
+
+
+def resolve_profile_root():
+    """Resolve the active profile directory.
+
+    Resolution order:
+      1. Explicit override: `--profile NAME` CLI flag (PROFILE_OVERRIDE)
+         or `$WPL_PROFILE` env var. Bypasses path resolution entirely.
+      2. Path-based: longest-prefix match of cwd against each profile's
+         declared `workspaces: [...]`.
+      3. Single-profile fallback: if exactly one profile exists and it
+         has no workspaces declared, use it (low-friction single setup).
+      4. First-run prompt: if stdin is a TTY and `$WPL_CHILD != "1"`,
+         prompt the user to associate or create.
+      5. Fail loudly with a diagnostic listing known profiles.
+
+    The `active` symlink is NOT consulted. It's preserved for backward
+    compatibility with external integrations (`wpl profile switch` still
+    updates it) but no longer participates in resolution.
+    """
+    # (1) Explicit override — CLI flag wins over env var.
+    override = PROFILE_OVERRIDE or os.environ.get("WPL_PROFILE", "").strip() or None
+    if override:
+        target = _find_profile_by_name(override)
+        if target is None:
+            fail(f"Profile '{override}' does not exist. "
+                 f"Known: {', '.join(d.name for d in _iter_profile_dirs()) or '(none)'}.")
+        return target
+
+    # (2) Path-based match.
+    cwd = _normalize_path(os.getcwd())
+    matched, _ws = _resolve_by_cwd(cwd)
+    if matched is not None:
+        return matched
+
+    # (3) Single-profile fallback (only if that profile declares no workspaces).
+    all_profiles = list(_iter_profile_dirs())
+    if len(all_profiles) == 1 and not _profile_workspaces(all_profiles[0]):
+        return all_profiles[0]
+
+    # (4) First-run prompt if interactive and not a subprocess.
+    is_tty = sys.stdin.isatty() if hasattr(sys.stdin, "isatty") else False
+    is_child = os.environ.get("WPL_CHILD", "") == "1"
+    if is_tty and not is_child and all_profiles:
+        result = _first_run_prompt(cwd)
+        if result is not None:
+            return result
+
+    # (5) Fail with a helpful diagnostic.
+    lines = [f"Current directory '{cwd}' is not associated with any profile."]
+    if all_profiles:
+        lines.append("")
+        lines.append("Known profiles and their workspaces:")
+        for d in all_profiles:
+            wss = _profile_workspaces(d)
+            if wss:
+                lines.append(f"  - {d.name}: {', '.join(wss)}")
+            else:
+                lines.append(f"  - {d.name}: (no workspaces declared)")
+        lines.append("")
+        lines.append("To fix, run one of:")
+        lines.append(f"  wpl profile associate <name> {cwd}")
+        lines.append(f"  wpl --profile <name> <command>")
+        lines.append(f"  WPL_PROFILE=<name> wpl <command>")
+    else:
+        lines.append("No profiles exist yet. Run /workplanner:start to set up, "
+                     "or: wpl profile create <name> --workspace <path>")
+    fail("\n".join(lines))
+
+
+def _add_workspace_to_profile(profile_dir, workspace_path):
+    """Append a workspace path to a profile's config.json, writing atomically.
+
+    Normalizes the path, checks for overlap with other profiles (same-path
+    conflict only — proper-prefix overlaps are intentional), and fails
+    loudly on conflict. No-op if the path is already present.
+    """
+    workspace_path = _normalize_path(workspace_path)
+    # Overlap check — same path claimed by another profile is ambiguous.
+    for d in _iter_profile_dirs():
+        if d == profile_dir:
+            continue
+        if workspace_path in _profile_workspaces(d):
+            fail(f"Workspace '{workspace_path}' is already claimed by "
+                 f"profile '{d.name}'. Disassociate it there first.")
+    config_path = profile_dir / "config.json"
+    cfg = _read_profile_config(profile_dir)
+    current = cfg.get("workspaces") or []
+    if not isinstance(current, list):
+        current = []
+    # Normalize for comparison; store the normalized form too.
+    normalized = [_normalize_path(p) for p in current
+                  if isinstance(p, str) and p.strip()]
+    if workspace_path in normalized:
+        return  # already present
+    normalized.append(workspace_path)
+    cfg["workspaces"] = normalized
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = str(config_path) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    os.rename(tmp, str(config_path))
+
+
+def _remove_workspace_from_profile(profile_dir, workspace_path):
+    """Remove a workspace path from a profile's config.json. Idempotent."""
+    workspace_path = _normalize_path(workspace_path)
+    config_path = profile_dir / "config.json"
+    cfg = _read_profile_config(profile_dir)
+    current = cfg.get("workspaces") or []
+    if not isinstance(current, list):
+        return
+    filtered = [_normalize_path(p) for p in current
+                if isinstance(p, str) and p.strip()
+                and _normalize_path(p) != workspace_path]
+    cfg["workspaces"] = filtered
+    tmp = str(config_path) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    os.rename(tmp, str(config_path))
+
+
+def _create_profile(name, workspaces=None):
+    """Create a new profile directory with baseline config. Returns the dir.
+
+    Overlap checks run *before* any filesystem mutation so a rejected
+    create leaves the `profiles/` tree untouched.
+    """
+    profiles_dir = WPL_ROOT / "profiles"
+    target = profiles_dir / name
+    cfg = {}
+    normalized = []
+    if workspaces:
+        normalized = [_normalize_path(w) for w in workspaces]
+        for ws in normalized:
+            for d in _iter_profile_dirs():
+                if ws in _profile_workspaces(d):
+                    fail(f"Workspace '{ws}' is already claimed by "
+                         f"profile '{d.name}'.")
+        cfg["workspaces"] = normalized
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    target.mkdir()
+    (target / "session").mkdir()
+    (target / "session" / "agendas" / "archive").mkdir(parents=True)
+    (target / "briefings").mkdir()
+    with open(target / "config.json", "w") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    with open(target / "backlog.json", "w") as f:
+        f.write('{"schema_version": 1, "items": []}\n')
+    # If no active symlink, set this as active (preserves backward compat
+    # for anything reading the symlink directly, though resolution no
+    # longer relies on it).
+    active_link = profiles_dir / "active"
+    if not active_link.exists():
+        active_link.symlink_to(name)
+    return target
 
 
 def resolve_paths():
@@ -1587,7 +1923,8 @@ def cmd_history(args):
 
 
 def cmd_profile(args):
-    """Profile management: list, create, switch, active, delete."""
+    """Profile management: list, create, switch, active, delete,
+    associate, disassociate, whoami, validate, migrate."""
     sub = args.profile_action
     profiles_dir = WPL_ROOT / "profiles"
 
@@ -1599,34 +1936,158 @@ def cmd_profile(args):
         active_link = profiles_dir / "active"
         if active_link.is_symlink() and active_link.resolve().is_dir():
             active_name = active_link.resolve().name
-        for d in sorted(profiles_dir.iterdir()):
-            if d.is_dir() and d.name != "active":
-                marker = " (active)" if d.name == active_name else ""
-                print(f"  {d.name}{marker}")
+        # Which profile matches cwd right now? (Informational marker only.)
+        cwd = _normalize_path(os.getcwd())
+        matched_dir, matched_ws = _resolve_by_cwd(cwd)
+        matched_name = matched_dir.name if matched_dir else None
+
+        for d in _iter_profile_dirs():
+            markers = []
+            if d.name == matched_name:
+                markers.append("cwd-match")
+            if d.name == active_name:
+                markers.append("active-symlink")
+            marker_str = f" ({', '.join(markers)})" if markers else ""
+            wss = _profile_workspaces(d)
+            print(f"  {d.name}{marker_str}")
+            if wss:
+                for ws in wss:
+                    arrow = " <-- cwd" if (
+                        matched_name == d.name and ws == matched_ws
+                    ) else ""
+                    print(f"      workspace: {ws}{arrow}")
+            else:
+                print(f"      (no workspaces declared — run "
+                      f"'wpl profile associate {d.name} <path>')")
+        # Overlap warnings.
+        overlaps = _detect_workspace_overlaps()
+        if overlaps:
+            print("")
+            print("WARNING: workspace overlaps (same path claimed by multiple profiles):")
+            for path, names in overlaps:
+                print(f"  {path}: {', '.join(names)}")
 
     elif sub == "create":
         name = args.name
-        if not name.isidentifier() and not name.replace("-", "").isalnum():
+        if not (name.isidentifier() or name.replace("-", "").isalnum()):
             fail(f"Invalid profile name '{name}'. Use letters, numbers, and hyphens.")
-        target = profiles_dir / name
-        if target.exists():
+        if (profiles_dir / name).exists():
             fail(f"Profile '{name}' already exists.")
-        profiles_dir.mkdir(parents=True, exist_ok=True)
-        target.mkdir()
-        (target / "session").mkdir()
-        (target / "session" / "agendas" / "archive").mkdir(parents=True)
-        (target / "briefings").mkdir()
-        for fname, content in [
-            ("config.json", "{}"),
-            ("backlog.json", '{"schema_version": 1, "items": []}'),
-        ]:
-            with open(target / fname, "w") as f:
-                f.write(content + "\n")
-        # If no active symlink, set this as active
-        active_link = profiles_dir / "active"
-        if not active_link.exists():
-            active_link.symlink_to(name)
-        print(f"Created profile '{name}'.")
+        workspaces = list(getattr(args, "workspace", []) or [])
+        _create_profile(name, workspaces=workspaces)
+        if workspaces:
+            print(f"Created profile '{name}' with workspaces: "
+                  f"{', '.join(_normalize_path(w) for w in workspaces)}")
+        else:
+            print(f"Created profile '{name}'. No workspaces declared — "
+                  f"run 'wpl profile associate {name} <path>' to enable "
+                  f"path-based resolution.")
+
+    elif sub == "associate":
+        name = args.name
+        path = args.path
+        target = _find_profile_by_name(name)
+        if target is None:
+            fail(f"Profile '{name}' does not exist.")
+        _add_workspace_to_profile(target, path)
+        print(f"Associated '{_normalize_path(path)}' with profile '{name}'.")
+
+    elif sub == "disassociate":
+        name = args.name
+        path = args.path
+        target = _find_profile_by_name(name)
+        if target is None:
+            fail(f"Profile '{name}' does not exist.")
+        before = _profile_workspaces(target)
+        _remove_workspace_from_profile(target, path)
+        after = _profile_workspaces(target)
+        if len(before) == len(after):
+            print(f"'{_normalize_path(path)}' was not associated with '{name}'.")
+        else:
+            print(f"Disassociated '{_normalize_path(path)}' from profile '{name}'.")
+
+    elif sub == "whoami":
+        cwd = _normalize_path(os.getcwd())
+        override = PROFILE_OVERRIDE or os.environ.get("WPL_PROFILE", "").strip() or None
+        if override:
+            target = _find_profile_by_name(override)
+            if target is None:
+                fail(f"Profile '{override}' (from override) does not exist.")
+            source = ("--profile flag" if PROFILE_OVERRIDE
+                      else "$WPL_PROFILE env var")
+            print(f"profile: {target.name}")
+            print(f"resolved via: {source}")
+            print(f"cwd: {cwd}")
+            return
+        matched, ws = _resolve_by_cwd(cwd)
+        if matched is not None:
+            print(f"profile: {matched.name}")
+            print(f"resolved via: path match")
+            print(f"matched workspace: {ws}")
+            print(f"cwd: {cwd}")
+            return
+        # Single-profile fallback?
+        all_profiles = list(_iter_profile_dirs())
+        if len(all_profiles) == 1 and not _profile_workspaces(all_profiles[0]):
+            print(f"profile: {all_profiles[0].name}")
+            print(f"resolved via: single-profile fallback (no workspaces declared)")
+            print(f"cwd: {cwd}")
+            return
+        print(f"profile: (unresolved)")
+        print(f"cwd: {cwd}")
+        if all_profiles:
+            print("known profiles:")
+            for d in all_profiles:
+                wss = _profile_workspaces(d)
+                print(f"  - {d.name}: {', '.join(wss) if wss else '(no workspaces)'}")
+
+    elif sub == "validate":
+        # Check for same-path overlaps across profiles.
+        overlaps = _detect_workspace_overlaps()
+        if overlaps:
+            print("Workspace overlaps detected:")
+            for path, names in overlaps:
+                print(f"  {path}: claimed by {', '.join(names)}")
+            sys.exit(1)
+        # Warn about profiles without workspaces (unless it's the only one).
+        all_profiles = list(_iter_profile_dirs())
+        missing = [d.name for d in all_profiles if not _profile_workspaces(d)]
+        if missing and len(all_profiles) > 1:
+            print("Profiles without declared workspaces "
+                  "(path-based resolution disabled):")
+            for name in missing:
+                print(f"  - {name}")
+            print("Run 'wpl profile associate <name> <path>' to fix.")
+            sys.exit(1)
+        print("OK")
+
+    elif sub == "migrate":
+        # Walk the user through associating paths for any profile that
+        # lacks workspaces. Interactive only — refuse if not a TTY.
+        if not (hasattr(sys.stdin, "isatty") and sys.stdin.isatty()):
+            fail("`wpl profile migrate` is interactive; run it from a TTY.")
+        missing = [d for d in _iter_profile_dirs() if not _profile_workspaces(d)]
+        if not missing:
+            print("All profiles have workspaces declared. Nothing to migrate.")
+            return
+        for d in missing:
+            print(f"\nProfile '{d.name}' has no workspaces declared.")
+            print(f"Enter one or more absolute paths (blank line to skip this profile).")
+            while True:
+                try:
+                    path = input(f"  workspace for {d.name}: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("")
+                    return
+                if not path:
+                    break
+                try:
+                    _add_workspace_to_profile(d, path)
+                    print(f"  associated {_normalize_path(path)}")
+                except SystemExit:
+                    # fail() already emitted the diagnostic.
+                    pass
+        print("\nMigration complete. Run 'wpl profile list' to review.")
 
     elif sub == "switch":
         name = args.name
@@ -1640,6 +2101,10 @@ def cmd_profile(args):
             fail(f"'{active_link}' exists but is not a symlink. Remove it manually.")
         active_link.symlink_to(name)
         print(f"Switched to profile '{name}'.")
+        print("")
+        print("Note: `wpl profile switch` is preserved for backward compatibility.")
+        print("Profile resolution now uses workspace paths declared on each profile.")
+        print("Run `wpl profile whoami` to see which profile matches your current directory.")
 
     elif sub == "active":
         active_link = profiles_dir / "active"
@@ -1669,7 +2134,8 @@ def cmd_profile(args):
         print(f"Deleted profile '{name}'.")
 
     else:
-        fail("Unknown profile action. Use: list, create, switch, active, delete")
+        fail("Unknown profile action. Use: list, create, switch, active, "
+             "delete, associate, disassociate, whoami, validate, migrate")
 
 
 def cmd_decision(args):
@@ -1843,6 +2309,16 @@ def build_parser():
         help="Output format. 'text' (default) is glyph-friendly, LLM- and human-readable. "
              "'json' emits a structured response suitable for programmatic parsing.",
     )
+    parser.add_argument(
+        "--profile",
+        dest="profile_override",
+        type=str,
+        default=None,
+        help="Override profile resolution for this invocation. Bypasses "
+             "path-based resolution and the $WPL_PROFILE env var. Use "
+             "for scripts running outside a declared workspace or for "
+             "deliberate cross-profile inspection.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_done = sub.add_parser("done", help="Mark current task done.")
@@ -1934,12 +2410,35 @@ def build_parser():
     profile_parser = sub.add_parser("profile", help="Profile management")
     profile_sub = profile_parser.add_subparsers(dest="profile_action")
     profile_sub.required = True
-    profile_sub.add_parser("list", help="List profiles")
-    p_create = profile_sub.add_parser("create", help="Create a profile")
+    profile_sub.add_parser("list", help="List profiles with workspaces and cwd match")
+    p_create = profile_sub.add_parser(
+        "create", help="Create a profile, optionally with workspaces")
     p_create.add_argument("name", help="Profile name")
-    p_switch = profile_sub.add_parser("switch", help="Switch active profile")
+    p_create.add_argument(
+        "--workspace", action="append", default=None,
+        help="Filesystem path to pre-associate with the new profile "
+             "(repeatable). Normalized via realpath.")
+    p_assoc = profile_sub.add_parser(
+        "associate", help="Add a workspace path to an existing profile")
+    p_assoc.add_argument("name", help="Profile name")
+    p_assoc.add_argument("path", help="Absolute path to associate")
+    p_disassoc = profile_sub.add_parser(
+        "disassociate", help="Remove a workspace path from a profile")
+    p_disassoc.add_argument("name", help="Profile name")
+    p_disassoc.add_argument("path", help="Absolute path to remove")
+    profile_sub.add_parser(
+        "whoami",
+        help="Show which profile the current cwd resolves to, and how.")
+    profile_sub.add_parser(
+        "validate",
+        help="Check for workspace overlaps and missing-workspace warnings.")
+    profile_sub.add_parser(
+        "migrate",
+        help="Interactively associate workspace paths with existing profiles.")
+    p_switch = profile_sub.add_parser(
+        "switch", help="[deprecated] Update the `active` symlink")
     p_switch.add_argument("name", help="Profile name to switch to")
-    profile_sub.add_parser("active", help="Show active profile name")
+    profile_sub.add_parser("active", help="Show active-symlink profile name")
     p_delete = profile_sub.add_parser("delete", help="Delete a profile")
     p_delete.add_argument("name", help="Profile name to delete")
     profile_parser.set_defaults(func=cmd_profile)
@@ -2089,8 +2588,12 @@ def main():
     args = parser.parse_args()
     # Set module-level output format for this invocation so commands can
     # branch on it (text vs json) without threading it through every call.
-    global OUTPUT_FORMAT
+    global OUTPUT_FORMAT, PROFILE_OVERRIDE
     OUTPUT_FORMAT = getattr(args, "output_format", "text") or "text"
+    # Set module-level profile override (CLI --profile flag). This wins
+    # over $WPL_PROFILE env var, which in turn wins over path-based
+    # resolution. See resolve_profile_root().
+    PROFILE_OVERRIDE = getattr(args, "profile_override", None) or None
     handler = DISPATCH.get(args.command)
     if handler:
         handler(args)

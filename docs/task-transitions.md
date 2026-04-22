@@ -41,6 +41,16 @@ The `wpl` wrapper lives at `~/.workplanner/bin/wpl` and forwards to `bin/transit
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--format {text,json}` | `text` | Output format. Text is glyph-friendly and LLM- and human-readable. JSON emits a structured response suitable for programmatic parsing by skills that want machine-parsable output. |
+| `--profile NAME` | — | Override profile resolution for this invocation. Bypasses path-based resolution and the `$WPL_PROFILE` env var. Use for scripts running outside any declared workspace (e.g. from `/tmp`) or for deliberate cross-profile inspection. See `docs/profiles.md`. |
+
+### Profile resolution
+
+Every `wpl` invocation resolves a profile before touching state. Order of
+precedence: `--profile` CLI flag, then `$WPL_PROFILE` env var, then
+longest-prefix match of cwd against each profile's declared
+`workspaces: [...]`, then a single-profile fallback, then an interactive
+prompt (TTY only), then failure. The global `active` symlink is not
+consulted. See `docs/profiles.md` for the full flow and migration notes.
 
 ### `--as "<title>"` echo check
 
