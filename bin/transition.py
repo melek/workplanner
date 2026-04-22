@@ -471,42 +471,6 @@ def load_user_json():
         return {}
 
 
-# Module-level flag so the deprecation warning fires at most once per process,
-# regardless of how many times load_config() is called.
-_HANDOFFS_DEPRECATION_WARNED = False
-
-
-def _warn_deprecated_handoffs_config(config):
-    """Emit a one-line stderr warning if legacy config.handoffs.* keys are present.
-
-    Fires at most once per process (module-level flag). The keys themselves are
-    left untouched in config.json — users remove them on their own schedule.
-
-    See https://github.com/melek/workplanner/issues/13.
-    """
-    global _HANDOFFS_DEPRECATION_WARNED
-    if _HANDOFFS_DEPRECATION_WARNED:
-        return
-    handoffs = config.get("handoffs") if isinstance(config, dict) else None
-    if not isinstance(handoffs, dict):
-        return
-    deprecated_keys = ("dir", "carryover_from_handoff", "filename_pattern")
-    present = [k for k in deprecated_keys if k in handoffs]
-    if not present:
-        return
-    _HANDOFFS_DEPRECATION_WARNED = True
-    # One key per message keeps the signal scannable and matches the
-    # "one-line deprecation warning" spec.
-    for k in present:
-        print(
-            f"warning: config.handoffs.{k} is deprecated and has no effect; "
-            f"handoffs now live at ~/.workplanner/profiles/<name>/handoffs/. "
-            f"See https://github.com/melek/workplanner/issues/13. "
-            f"Remove this key from config.json to silence this warning.",
-            file=sys.stderr,
-        )
-
-
 def load_config():
     """Load profile config with user.json fallback for timezone/eod_target."""
     paths = resolve_paths()
@@ -519,7 +483,6 @@ def load_config():
     for key in ("timezone", "eod_target"):
         if key not in config and key in user:
             config[key] = user[key]
-    _warn_deprecated_handoffs_config(config)
     return config
 
 
