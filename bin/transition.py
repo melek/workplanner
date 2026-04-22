@@ -46,6 +46,7 @@ def resolve_paths():
     root = resolve_profile_root()
     class P:
         PROFILE_ROOT = root
+        PROFILE_NAME = root.name  # concrete name, not the 'active' alias
         SESSION = root / "session" / "current-session.json"
         CONFIG = root / "config.json"
         BACKLOG = root / "backlog.json"
@@ -55,6 +56,10 @@ def resolve_paths():
         EVENTS = root / "session" / "events.json"
         AGENDAS = root / "session" / "agendas"
         BRIEFINGS = root / "briefings"
+        # Session-handoff docs (local narrative) live under the *concrete*
+        # profile-name path, never under profiles/active/. This sidesteps the
+        # known profile-symlink race (issue #10) for this artifact.
+        HANDOFFS = root / "handoffs"
     return P
 
 
