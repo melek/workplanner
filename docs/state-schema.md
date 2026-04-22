@@ -25,8 +25,9 @@ Source of truth for all session state. If the JSON and any derived artifacts (ma
 | `current_task_index` | `integer \| null` | yes | 0-based index of the active task in the `tasks` array, or `null` if no task is active. |
 | `tasks` | `array` | yes | Ordered list of task objects. |
 | `coordination_thread` | `object \| null` | no | Captured Slack coordination thread, if any. |
-| `eod_posted` | `boolean` | yes | Whether the end-of-day summary has been posted. |
+| `eod_posted` | `boolean` | yes | Whether the end-of-day summary has been posted (to Linear / external system). |
 | `eod_linear_comment_url` | `string \| null` | yes | URL of the EOD comment on Linear, or `null` if not yet posted. |
+| `eod_handoff_written` | `boolean` | no | Whether this session wrote its contribution to today's local handoff doc (`profiles/<name>/handoffs/YYYY-MM-DD.md`). Distinct from `eod_posted` — handoff-write and Linear-post are separate checkpoints. Default: absent/`false` on older sessions (migration-safe). |
 | `sweep_since` | `string` (ISO 8601) \| null | no | Cutoff timestamp for inbox sweep. Computed from previous session's EOD or yesterday 08:00. |
 | `inbox_items` | `array` | no | Raw captured items from inbox sweep. Cleared after `agenda_built`. See inbox item schema. |
 | `headlines` | `array` of `string` | no | FYI items for agenda header (from digest + low-signal sources). |
@@ -88,6 +89,7 @@ Tasks do NOT have an `id` field in JSON. Display IDs (`t1`, `t2`, ...) are deriv
 | `notes` | `string \| null` | no | Free-text notes. |
 | `parent` | `integer \| null` | no | 0-based index of parent task for sub-task nesting. |
 | `deferral_count` | `integer` | no | Number of times this task has been deferred (persists through carryover). Default: 0. When this reaches `config.triage.deferrals.reckoning_threshold`, the system triggers a forced reckoning prompt instead of silently deferring. |
+| `defer_reason` | `string` | no | Optional human-readable explanation of *why* the task was deferred. Set via `wpl defer --reason "..."` (or `wpl reckon <choice> --reason "..."`). Persists on the task, travels across carryover (session → backlog → session), and is surfaced in reckoning prompts, `/eod` handoff doc, and `/start` carryover mini-triage. Absent on older state files — migration-safe (any consumer uses `.get()`). |
 
 ### State mutations
 
@@ -190,6 +192,47 @@ Optional. Controls priority assignment, estimate defaults, ordering, and deferra
 
 ---
 
+## Handoff docs
+
+**Location:** `~/.workplanner/profiles/<name>/handoffs/{YYYY-MM-DD}.md`
+
+Workspace-local markdown files written by `/eod` and read by the next day's `/start`. One file per date. The path uses the *concrete* profile name (not the `active` alias) so concurrent sessions don't race the symlink.
+
+### Structure
+
+Merge-by-section format. Top-level `## Heading` sections, each further split into `### <session-id>` sub-sections so concurrent sessions contribute without clobbering each other.
+
+Recognised sections (writers only touch these; anything else passes through verbatim):
+
+| Section | Purpose |
+|---------|---------|
+| `## Session trajectory` | High-level narrative of what got done, deferred, blocked. |
+| `## Deferred with reasons` | Every task ending the day `deferred` or `blocked`, with `defer_reason` inline. Format: `- **<title>** (<uid>): <reason>`. |
+| `## Open questions` | Things the LLM or user noticed that need decision/research/escalation. |
+| `## Context for tomorrow` | Short concrete pointers for the next morning. |
+
+### Session identifier
+
+`### <session-id>` sub-headings disambiguate concurrent writers. The identifier is picked by `bin/handoff.py` in priority order:
+
+1. `$CLAUDE_SESSION_ID` if set
+2. `$TMUX_PANE` if running inside tmux (e.g., `pane-%3`)
+3. Hash of the python process start time (fallback — stable within a process, not across re-invocations)
+
+### Read/write API
+
+The file is read and written through `bin/handoff.py`. Skills never edit it directly.
+
+```bash
+python3 bin/handoff.py write --trajectory "..." --deferred-json '[{...}]' --open-questions "..." --context "..."
+python3 bin/handoff.py read [--date YYYY-MM-DD]    # prints JSON with {path, date, exists, sections, deferred, raw}
+python3 bin/handoff.py path [--date YYYY-MM-DD]    # prints the resolved path
+```
+
+`write` is idempotent within a session-id: re-running overwrites that session's sub-sections only. Other sessions' sub-sections and unrecognised `## ...` sections (e.g., human free-text additions) are preserved verbatim.
+
+---
+
 ## Briefings
 
 **Location:** `~/.workplanner/profiles/<name>/briefings/{date}/`
@@ -276,6 +319,8 @@ Uses the same base fields as a session task, plus temporal targeting fields.
 | `not_before` | `string` (ISO date) \| null | no | "Don't surface until this date." Suppresses auto-promotion. |
 | `deadline` | `string` (ISO date) \| null | no | Hard deadline. Drives urgency warnings and auto-promotion when ≤2 days away. |
 | `tags` | `array` of `string` | no | Lightweight categorization for filtering in `/horizon`. |
+| `defer_reason` | `string` | no | Preserved when a deferred session task is sent to the backlog; carried back to the promoted session task on `backlog --promote`. |
+| `deferral_count` | `integer` | no | Preserved alongside `defer_reason` so reckoning signal survives the backlog round-trip. |
 
 ### Surfacing rules
 

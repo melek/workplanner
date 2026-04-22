@@ -245,6 +245,33 @@ Create `current-session.json` with the schema from `${CLAUDE_PLUGIN_ROOT}/docs/s
 
 Use atomic writes (tmp file → mv) for ALL state mutations.
 
+### Step 0.25: Read yesterday's handoff doc
+
+Before the inbox sweep, read yesterday's local handoff doc (written by `/eod` the previous day):
+
+```bash
+# Resolve yesterday's date in the profile's timezone (same logic as sweep_since).
+YESTERDAY=$(python3 -c "
+from datetime import timedelta
+import json, os, sys
+sys.path.insert(0, '${CLAUDE_PLUGIN_ROOT}/bin')
+from transition import local_today, load_config
+print((local_today(load_config()) - timedelta(days=1)).isoformat())
+")
+python3 "${CLAUDE_PLUGIN_ROOT}/bin/handoff.py" read --date "$YESTERDAY"
+```
+
+The output is a JSON blob with `sections` (aggregated across all session sub-sections), `deferred` (parsed list of `{title, uid, reason, session}` dicts), and `raw` (the full markdown for fallback).
+
+**What to do with it:**
+
+- **Deferred list** (`.deferred`) feeds the carryover mini-triage (see Step 3 below).
+- **Open questions** → include in the morning headlines so they surface early ("Open from yesterday: <question>").
+- **Context for tomorrow** → treat as LLM-addressed notes to self; read once, apply as pre-conditioning for the day ahead. Optionally surface top items in headlines.
+- **Session trajectory** → contextual only; used to inform decisions but not re-shown verbatim in the agenda.
+
+If the file is missing (fresh install, or yesterday's /eod didn't run), proceed with a log line "No handoff for yesterday" and rely on session-JSON carryover as before.
+
 ### Step 0.5: Pre-work activity scan
 
 If `config.triage.pre_work` exists, scan for work the user already did this morning before running `/start`. This recognizes the natural pattern of checking Slack, replying to threads, and reading team blogs before formal planning.
@@ -302,7 +329,21 @@ Apply the triage framework from `${CLAUDE_PLUGIN_ROOT}/docs/triage-framework.md`
 1. **Deduplicate** — Match by `dedupe_key`. Merge: keep highest priority, combine context
 2. **Triage & Prioritize** — Assign priority tiers using `config.triage.source_priority` (or defaults). Assign estimates using `config.triage.estimates` (or defaults). Runtime overrides: `overdue: true` → critical; `due_date == today` → at least high.
 3. **"Waiting on you"** — Identify items where someone is blocked on a response (source: `slack-ping`, `github` review request, `linear` with recent user-mentioning comment). Surface as a distinct block in the agenda output (max 3). These are also in the task list at their normal priority.
-4. **Deferral reckoning** — For carryover items where `deferral_count >= config.triage.deferrals.reckoning_threshold` (default: 3), present a reckoning prompt: break down, delegate, drop, timebox, or keep. Apply the user's decision before proceeding.
+4. **Carryover mini-triage** — For every carryover task (whether or not it's at the deferral threshold), surface its `defer_reason` from yesterday's handoff + task state inline. Ask, for each: "does this still matter? re-prioritize / re-scope / send to backlog / keep as-is?" This is the lightweight check that prevents deferred items from silently re-entering the agenda without reconsideration. Apply the user's answer via the appropriate `wpl` command (`wpl remove t<N>`, `wpl backlog --from t<N> --target <date>`, or just leave the task in place). If a task is at `deferral_count >= config.triage.deferrals.reckoning_threshold` (default: 3), escalate to the full reckoning prompt: break down, delegate, drop, timebox, or keep.
+
+   The carryover triage must present `defer_reason` alongside each task, because without that context the "does this still matter?" question has no anchor. Example presentation:
+
+   ```
+   Carryover from yesterday:
+   1. Review Stéphane's PR (t3 est ~30m, ref: HAL-123)
+      Reason yesterday: "waiting on Stéphane to push fixture refactor"
+      Keep / defer / drop / backlog / re-scope?
+   2. Update API docs (t5 est ~15m)
+      Reason yesterday: "underspecified — what do we actually want to document?"
+      Keep / defer / drop / backlog / re-scope?
+   ```
+
+   Record outcomes. If the user says "defer again" with a new reason, pass it via `wpl defer --reason "..."` so the updated reason lives on the task.
 5. **Filter** — Always: critical, high, overdue, due-today. Medium if budget allows. Cap at `config.triage.filter.task_cap` (default: 10) tasks.
 6. **Order** — Per `config.triage.ordering` (default: critical → high → medium → focus). Carryover ordered by its assigned tier, not auto-first.
 7. **Time structure** — Insert `config.protected_blocks` + `session.calendar_events`. Compute budget.
