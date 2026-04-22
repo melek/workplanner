@@ -12,6 +12,12 @@
 
 - `wpl profile switch` now prints a deprecation note. It still updates the `active` symlink for backward compatibility, but profile resolution no longer consults the symlink.
 - `wpl profile list` shows each profile's workspaces and marks the one matching cwd.
+- **Stale-session recovery unified with normal EOD handoff** (issue #13). `/start`'s stale-session handler now backfills a handoff at `~/.workplanner/profiles/<name>/handoffs/{stale_date}.md` using `bin/handoff.py write` — the same path `/eod` writes to on the normal path. A distinct session-id of the form `stale-recovery-{stale_date}` makes backfills visible in the file. Step 0.25 reads backfilled and normal-path handoffs identically. Re-running `/start` on a still-stale session is idempotent: if a `stale-recovery-*` sub-section is already present for the date, the handler logs "Handoff already written" and continues.
+- **External Linear posting is now orthogonal to local handoff.** The stale-session handler no longer forks between "local-handoff mode" and "external-posting mode". The local handoff is always written; a retroactive Linear post is a separate, optional decision gated on Linear MCP availability and `personal_sub_issue`.
+
+### Deprecated
+
+- `config.handoffs.dir`, `config.handoffs.filename_pattern`, and `config.handoffs.carryover_from_handoff` are deprecated and no longer read by any skill. `load_config()` emits a one-line stderr warning (at most once per process) when any of these keys is present. The keys are left untouched in the user's `config.json` — remove them when convenient to silence the warning.
 
 ## 1.0.0-beta.2
 

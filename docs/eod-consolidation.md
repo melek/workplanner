@@ -58,6 +58,8 @@ Five sequential steps. Unlike morning assembly, these are not checkpointed -- th
 5. Idempotent within a session: re-running EOD overwrites this session's sub-sections only.
 6. On success, set `eod_handoff_written: true` in session state (a separate checkpoint from `eod_posted`, which tracks Linear posting).
 
+**Stale-session recovery uses the same path.** When `/start` finds a session with `eod_posted: false` from an earlier date, it backfills a handoff at `~/.workplanner/profiles/<name>/handoffs/{stale_date}.md` using a distinct session-id of the form `stale-recovery-{stale_date}`. The next morning's `/start` Step 0.25 reads the backfilled handoff exactly as it would a normal `/eod`-written one — there is no second mechanism or separate path. See `skills/start/SKILL.md` → "Stale Session Handler".
+
 ## Step 5: Carryover & Close
 
 1. Extract all tasks with status `deferred` or `blocked` from the session.
