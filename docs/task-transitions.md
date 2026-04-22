@@ -26,9 +26,9 @@ The `wpl` wrapper lives at `~/.workplanner/bin/wpl` and forwards to `bin/transit
 
 | Command | Args | Effect |
 |---------|------|--------|
-| `done` | `[--as "<title>"]` | Mark current task done (records actual_min), advance to next pending |
-| `blocked` | `[reason...]` | Mark current task blocked, advance to next pending |
-| `defer` | — | Mark current task deferred, advance to next pending |
+| `done` | `[--as "<title>"]` | Mark **current task** done (no positional target — see "Current-task verbs" below) |
+| `blocked` | `[reason...]` | Mark **current task** blocked; remaining args become the free-text reason |
+| `defer` | `[--until DATE] [--reason ...]` | Defer **current task**; with `--until` sends to backlog with target date |
 | `add` | `<title> [flags]` | Add a new task (see flags below) |
 | `move` | `<source> --to <dest>` | Reorder a task to a new position |
 | `switch` | `<target> [--no-pause]` | Switch focus to a different task |
@@ -55,6 +55,48 @@ consulted. See `docs/profiles.md` for the full flow and migration notes.
 ### `--as "<title>"` echo check
 
 `done` and `remove` accept an optional `--as "<title>"` argument. When present, the CLI compares the echoed title to the target task's actual title (case-insensitive, whitespace-tolerant). On mismatch, the mutation is refused with an error naming the actual title and UID, and the process exits non-zero. This is a cheap sanity check that catches "wrong-task" mistakes from stale display IDs, and self-documents the LLM's intent in the session transcript. Absent `--as`, behavior is unchanged.
+
+### Current-task verbs vs target verbs
+
+`done`, `blocked`, and `defer` operate **only on the current task** — the one `current_task_index` points at. They take no positional task target. To act on a different task, switch first:
+
+```bash
+wpl switch t3 && wpl done
+```
+
+Typing `wpl done t3` (or `blocked t3` / `defer t3`) is rejected with a structured redirect to the switch-then-verb pattern; `t3` is never silently accepted as a blocked reason.
+
+### Status header — "no active" vs "all complete"
+
+The status header distinguishes three end states:
+
+- **`All tasks complete`** — every task in the plan landed in `done`.
+- **`No active task — N pending`** — no task is `in_progress`, but `N` pending tasks remain. Common after a `switch X && done` sequence that doesn't auto-advance.
+- **`No active task`** — no `in_progress` task and no pending tasks (only blocked/deferred tasks remain).
+
+Only the first means the day is done.
+
+### Stale-session detection
+
+Reading a session whose `date` is older than today emits a one-line stderr warning naming the date and offset, and points at `/workplanner:start`. The command still runs (graceful degradation). JSON consumers can detect staleness programmatically via `is_stale: bool` and `session_date_offset_days: int` on the status payload.
+
+### Profile breadcrumb
+
+When `--profile NAME` or `$WPL_PROFILE` overrides cwd-based resolution, text mode prepends a one-line breadcrumb to stdout:
+
+```
+(profile: other — via --profile flag)
+```
+
+JSON mode carries the same information on every response via `profile_name` and `resolved_via` (one of `cli-flag`, `env-var`, `cwd-match`, `single-profile-fallback`, `unresolved`). Cwd-match resolution emits no breadcrumb (the common case stays quiet).
+
+### Timezone configuration
+
+When the resolved profile has no `timezone` set, `local_today()` falls back to UTC and emits a one-time stderr warning naming the config key. Set the timezone explicitly to silence:
+
+```bash
+wpl config set timezone America/Los_Angeles --rationale "..."
+```
 
 ### `add` flags
 
