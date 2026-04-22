@@ -88,6 +88,7 @@ Tasks do NOT have an `id` field in JSON. Display IDs (`t1`, `t2`, ...) are deriv
 | `notes` | `string \| null` | no | Free-text notes. |
 | `parent` | `integer \| null` | no | 0-based index of parent task for sub-task nesting. |
 | `deferral_count` | `integer` | no | Number of times this task has been deferred (persists through carryover). Default: 0. When this reaches `config.triage.deferrals.reckoning_threshold`, the system triggers a forced reckoning prompt instead of silently deferring. |
+| `defer_reason` | `string` | no | Optional human-readable explanation of *why* the task was deferred. Set via `wpl defer --reason "..."` (or `wpl reckon <choice> --reason "..."`). Persists on the task, travels across carryover (session → backlog → session), and is surfaced in reckoning prompts, `/eod` handoff doc, and `/start` carryover mini-triage. Absent on older state files — migration-safe (any consumer uses `.get()`). |
 
 ### State mutations
 
@@ -276,6 +277,8 @@ Uses the same base fields as a session task, plus temporal targeting fields.
 | `not_before` | `string` (ISO date) \| null | no | "Don't surface until this date." Suppresses auto-promotion. |
 | `deadline` | `string` (ISO date) \| null | no | Hard deadline. Drives urgency warnings and auto-promotion when ≤2 days away. |
 | `tags` | `array` of `string` | no | Lightweight categorization for filtering in `/horizon`. |
+| `defer_reason` | `string` | no | Preserved when a deferred session task is sent to the backlog; carried back to the promoted session task on `backlog --promote`. |
+| `deferral_count` | `integer` | no | Preserved alongside `defer_reason` so reckoning signal survives the backlog round-trip. |
 
 ### Surfacing rules
 

@@ -740,18 +740,28 @@ def cmd_defer(args):
     if task["status"] not in ("in_progress", "pending"):
         fail(f"{tid(idx)} is {task['status']}, can't defer.")
 
+    reason = getattr(args, "reason", None)
+    prior_reason = task.get("defer_reason")
+
     until = getattr(args, "until", None)
     if until:
         # Defer to backlog with target_date
         target_date = parse_relative_date(until)
         if target_date is None:
             fail(f"Can't parse date: {until}. Use YYYY-MM-DD, tomorrow, monday-sunday, or next-week.")
+        # Attach reason before moving so it travels into the backlog item.
+        if reason:
+            task["defer_reason"] = reason
         _move_task_to_backlog(session, idx, target_date=target_date.isoformat())
         return
 
     # Track deferral count
     count = task.get("deferral_count", 0) + 1
     task["deferral_count"] = count
+
+    # Attach/refresh the reason if one was provided on this invocation.
+    if reason:
+        task["defer_reason"] = reason
 
     # Check reckoning threshold
     config = load_config()
@@ -760,13 +770,18 @@ def cmd_defer(args):
                  .get("reckoning_threshold", 3))
     if count >= threshold:
         print(f"\u26a0 {tid(idx)} \"{task['title']}\" has been deferred {count} times.")
+        # Surface prior context so the reckoning decision has the "why" in hand.
+        if reason:
+            print(f"  Reason (this defer): {reason}")
+        elif prior_reason:
+            print(f"  Last reason: {prior_reason}")
         print(f"  What's actually going on?")
         print(f"  [b] Break it down into smaller tasks")
         print(f"  [d] Delegate \u2014 reassign or ask for help")
         print(f"  [x] Drop it \u2014 it's not going to happen")
         print(f"  [t] Timebox \u2014 schedule a dedicated block (sends to backlog with target date)")
         print(f"  [k] Keep deferring \u2014 I'll get to it")
-        # Save the incremented count but don't change status yet
+        # Save the incremented count (and reason, if given) but don't change status yet.
         save_session(session, undo=False)
         sys.exit(2)  # Signal to calling skill that reckoning is needed
 
@@ -779,7 +794,8 @@ def cmd_defer(args):
     save_session(session)
     render()
 
-    human = f"\u21b7 {tid(idx)} deferred ({count}x). [{remaining_summary(session)}]"
+    reason_tag = f" \u2014 {task['defer_reason']}" if task.get("defer_reason") else ""
+    human = f"\u21b7 {tid(idx)} deferred ({count}x){reason_tag}. [{remaining_summary(session)}]"
     emit_mutation("defer", session, affected=[(idx, task)],
                   config=load_config(), human_line=human)
 
@@ -1036,6 +1052,12 @@ def _move_task_to_backlog(session, idx, target_date=None, not_before=None, deadl
         "deadline": deadline,
         "tags": tags or [],
     }
+    # Preserve defer_reason if it was recorded on the task (so carryover keeps context).
+    if task.get("defer_reason"):
+        item["defer_reason"] = task["defer_reason"]
+    # Preserve deferral_count so history-scoped reckoning can reason about it later.
+    if task.get("deferral_count"):
+        item["deferral_count"] = task["deferral_count"]
     backlog["items"].append(item)
 
     # Remove from session
@@ -1268,6 +1290,12 @@ def _backlog_promote(args):
         new_task["url"] = item["url"]
     if item.get("notes"):
         new_task["notes"] = item["notes"]
+    # Carry defer_reason / deferral_count back into the session task so the "why"
+    # travels with the task across the backlog round-trip.
+    if item.get("defer_reason"):
+        new_task["defer_reason"] = item["defer_reason"]
+    if item.get("deferral_count"):
+        new_task["deferral_count"] = item["deferral_count"]
 
     tasks = session.get("tasks", [])
     cur_idx = session.get("current_task_index")
@@ -1388,6 +1416,14 @@ def cmd_reckon(args):
     if task is None:
         fail("No current task.")
 
+    # If the user passed a --reason, attach/update it now so it surfaces in the
+    # post-reckon output line and travels with the task (whether it stays in
+    # session, is dropped, or is moved to the backlog).
+    new_reason = getattr(args, "reason", None)
+    if new_reason:
+        task["defer_reason"] = new_reason
+    prior_reason = task.get("defer_reason")
+
     choice = args.choice.lower()
     if choice in ("k", "keep"):
         # Force defer despite threshold
@@ -1398,7 +1434,8 @@ def cmd_reckon(args):
         save_session(session)
         render()
         count = task.get("deferral_count", 0)
-        human = f"\u21b7 {tid(idx)} deferred ({count}x, keeping). [{remaining_summary(session)}]"
+        reason_tag = f" \u2014 {prior_reason}" if prior_reason else ""
+        human = f"\u21b7 {tid(idx)} deferred ({count}x, keeping){reason_tag}. [{remaining_summary(session)}]"
         emit_mutation("reckon:keep", session, affected=[(idx, task)],
                       config=load_config(), human_line=human)
 
@@ -1436,7 +1473,8 @@ def cmd_reckon(args):
             session["current_task_index"] = None
         save_session(session)
         render()
-        human = f"\u21b7 {tid(idx)} deferred for decomposition. [{remaining_summary(session)}]"
+        reason_tag = f" \u2014 {prior_reason}" if prior_reason else ""
+        human = f"\u21b7 {tid(idx)} deferred for decomposition{reason_tag}. [{remaining_summary(session)}]"
         emit_mutation("reckon:break", session, affected=[(idx, task)],
                       config=load_config(), human_line=human)
 
@@ -1450,7 +1488,8 @@ def cmd_reckon(args):
         task["notes"] = f"{existing}{sep}Reckoning: delegate/reassign.".strip()
         save_session(session)
         render()
-        human = f"\u21b7 {tid(idx)} deferred (delegate/reassign). [{remaining_summary(session)}]"
+        reason_tag = f" \u2014 {prior_reason}" if prior_reason else ""
+        human = f"\u21b7 {tid(idx)} deferred (delegate/reassign){reason_tag}. [{remaining_summary(session)}]"
         emit_mutation("reckon:delegate", session, affected=[(idx, task)],
                       config=load_config(), human_line=human)
 
@@ -1817,6 +1856,7 @@ def build_parser():
 
     p_defer = sub.add_parser("defer", help="Defer current task.")
     p_defer.add_argument("--until", type=str, default=None, help="Target date (YYYY-MM-DD, tomorrow, monday, next-week). Sends to backlog.")
+    p_defer.add_argument("--reason", type=str, default=None, help="Why the task is being deferred. Persists on the task and surfaces in reckoning and handoff.")
 
     p_add = sub.add_parser("add", help="Add a new task.")
     p_add.add_argument("title", nargs="+", help="Task title.")
@@ -1874,6 +1914,7 @@ def build_parser():
     p_reckon = sub.add_parser("reckon", help="Apply a reckoning decision after deferral threshold.")
     p_reckon.add_argument("choice", help="Decision: b(reak), d(elegate), x/drop, t(imebox), k(eep).")
     p_reckon.add_argument("--date", type=str, default=None, help="Target date for timebox (required for 't').")
+    p_reckon.add_argument("--reason", type=str, default=None, help="Update the defer_reason alongside the reckoning decision.")
 
     sub.add_parser("status", help="Print one-line status.")
 
