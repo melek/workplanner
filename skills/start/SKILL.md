@@ -239,16 +239,7 @@ Triggered when `current-session.json` exists but `date` ≠ today.
 
    No prompt. The backfill is silent recovery — the file IS the handoff artifact, and Step 0.25 below will read it the same way it reads a normal-path handoff written by yesterday's `/eod`.
 
-3. **External posting (Linear) — optional, orthogonal to the local handoff.**
-
-   Posting a retroactive daily update to Linear is a separate decision from writing the local handoff. Offer it only if the user has Linear integration wired (i.e., Linear MCP is up and `personal_sub_issue` is set on the stale session or resolvable via `config.weekly_focus`):
-
-   - Draft a Linear update for the stale date in the `/eod` Step 2 format.
-   - Ask: "Post yesterday's update to your weekly check-in? [Post / Skip]"
-   - On Post: use Linear MCP `save_comment` on the stale session's `personal_sub_issue`. Note success.
-   - On Skip: note "Skipped retroactive Linear post" and continue.
-
-   If Linear is not configured or not reachable, skip this step silently — the local handoff from step 2 is sufficient for recovery.
+3. **No retroactive external posting.** The backfilled handoff from step 2 is the recovery artifact, period. Do not draft or prompt to post a retroactive check-in to any external system (project-management, messaging, or otherwise) on the user's behalf — a missed day that rolls over is a signal to move on, not to retroactively catch up public channels. If the user wants to post something about yesterday, they'll do it themselves.
 
 4. Extract `deferred` and `blocked` tasks as carryover candidates. Prefer the handoff file (via `handoff.py read`) over the raw session JSON when both are available — a scope pivot captured in the handoff overrides the stale session's original task titles and reasons.
 5. Archive: move the session to `$PROFILE_ROOT/session/agendas/archive/{date}.json`.
