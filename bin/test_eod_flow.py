@@ -97,6 +97,15 @@ def test_start_skill_no_retroactive_post_prompt():
                      "start skill: retroactive-post negation present")
 
 
+def test_start_skill_uses_eod_handoff_written():
+    """Stale-session trigger must check eod_handoff_written, not vestigial eod_posted."""
+    text = _read(START_SKILL)
+    _assert_absent(text, "eod_posted",
+                   "start skill: eod_posted must be gone post #31")
+    _assert_contains(text, "eod_handoff_written",
+                     "start skill: canonical EOD marker present")
+
+
 def test_eod_doc_step_order():
     """docs/eod-consolidation.md mirrors the skill's new order."""
     text = _read(EOD_DOC)
@@ -128,6 +137,7 @@ def main():
         test_eod_skill_close_gate,
         test_eod_skill_conditional_drafts,
         test_start_skill_no_retroactive_post_prompt,
+        test_start_skill_uses_eod_handoff_written,
         test_eod_doc_step_order,
         test_eod_doc_no_auto_post,
     ]

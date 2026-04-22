@@ -25,9 +25,7 @@ Source of truth for all session state. If the JSON and any derived artifacts (ma
 | `current_task_index` | `integer \| null` | yes | 0-based index of the active task in the `tasks` array, or `null` if no task is active. |
 | `tasks` | `array` | yes | Ordered list of task objects. |
 | `coordination_thread` | `object \| null` | no | Captured Slack coordination thread, if any. |
-| `eod_posted` | `boolean` | yes | Whether the end-of-day summary has been posted (to Linear / external system). |
-| `eod_linear_comment_url` | `string \| null` | yes | URL of the EOD comment on Linear, or `null` if not yet posted. |
-| `eod_handoff_written` | `boolean` | no | Whether this session wrote its contribution to today's local handoff doc (`profiles/<name>/handoffs/YYYY-MM-DD.md`). Distinct from `eod_posted` — handoff-write and Linear-post are separate checkpoints. Default: absent/`false` on older sessions (migration-safe). |
+| `eod_handoff_written` | `boolean` | no | Canonical EOD-completion marker. Set to `true` by `/eod` Step 2 after the local handoff doc is written successfully; session close (Step 4) gates on this being true. Absent or `false` in a past-dated session signals that EOD did not complete and triggers the stale-session handler in `/start`. |
 | `sweep_since` | `string` (ISO 8601) \| null | no | Cutoff timestamp for inbox sweep. Computed from previous session's EOD or yesterday 08:00. |
 | `inbox_items` | `array` | no | Raw captured items from inbox sweep. Cleared after `agenda_built`. See inbox item schema. |
 | `headlines` | `array` of `string` | no | FYI items for agenda header (from digest + low-signal sources). |
@@ -235,7 +233,7 @@ python3 bin/handoff.py path [--date YYYY-MM-DD]    # prints the resolved path
 
 ### Stale-session recovery
 
-When `/start` finds a stale session (`current-session.json` date ≠ today) with `eod_posted: false`, it backfills a handoff for the stale date at the **same path** (`~/.workplanner/profiles/<name>/handoffs/{stale_date}.md`) using a distinct session-id of the form `stale-recovery-{stale_date}`. The next morning's `/start` Step 0.25 reads this file the same way it reads a normal-path handoff — aggregation across sub-sections is session-id-agnostic. See `skills/start/SKILL.md` → "Stale Session Handler".
+When `/start` finds a stale session (`current-session.json` date ≠ today) whose `eod_handoff_written` is absent or `false`, it backfills a handoff for the stale date at the **same path** (`~/.workplanner/profiles/<name>/handoffs/{stale_date}.md`) using a distinct session-id of the form `stale-recovery-{stale_date}`. The next morning's `/start` Step 0.25 reads this file the same way it reads a normal-path handoff — aggregation across sub-sections is session-id-agnostic. See `skills/start/SKILL.md` → "Stale Session Handler".
 
 ---
 

@@ -235,7 +235,7 @@ Triggered when `current-session.json` exists but `date` ≠ today.
 
 1. Read the stale session.
 
-2. **If `eod_posted: false` — backfill a local handoff for the stale date.**
+2. **If `eod_handoff_written` is absent or `false` — backfill a local handoff for the stale date.**
 
    The handoff path is workplanner-owned: `~/.workplanner/profiles/<resolved-name>/handoffs/{stale_session.date}.md`. Check whether this session's backfill contribution already exists. Resolve the path and inspect it via `bin/handoff.py`:
 
