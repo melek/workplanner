@@ -83,17 +83,27 @@ Proceed to Routing. Individual runbooks already handle graceful degradation.
 
 ## Routing
 
-Read `~/.workplanner/user.json`, `~/.workplanner/profiles/active/config.json`, and `~/.workplanner/profiles/active/session/current-session.json`. Route based on state:
+Resolve the active profile via `wpl profile whoami` (reads cwd, falls back to `--profile`/`$WPL_PROFILE` overrides, then single-profile fallback). Read `~/.workplanner/user.json`, the resolved profile's `config.json`, and the resolved profile's `session/current-session.json`. Route based on state:
 
 ```
 if user.json missing (~/.workplanner/user.json)  → First-Run Setup
+if `wpl profile whoami` returns "(unresolved)"   → Workspace Association (see below)
 if config.json missing                            → First-Run Setup (profile not configured)
+if profile has no workspaces and >1 profile exists → prompt to associate cwd (non-blocking warning)
 if session missing             → Morning Assembly
 if session.date ≠ local_today  → Stale Session Handler → Morning Assembly
 if checkpoint < assembly_complete → Resume Morning Assembly (skip completed steps)
 if checkpoint = assembly_complete → Status Check
 if checkpoint = closed         → "Yesterday's session is closed. Starting fresh." → Morning Assembly
 ```
+
+### Workspace Association
+
+If `wpl profile whoami` prints `profile: (unresolved)` (cwd doesn't match any profile and single-profile fallback doesn't apply), prompt the user before continuing:
+
+> "This directory (`<cwd>`) isn't associated with any profile. Your profiles are: `<list>`. Options: (1) associate this directory with an existing profile, (2) create a new profile rooted here, (3) run this session against a specific profile via `--profile NAME`."
+
+On (1) or (2), run the corresponding `wpl profile associate` / `wpl profile create --workspace` and re-run `wpl profile whoami` to confirm. On (3), prefix subsequent `wpl` calls with `--profile NAME` for this session.
 
 **Date comparison:** When checking whether a session is stale, compare `session.date` against today's date **in the configured timezone** (`config.timezone`, e.g. `Europe/Paris`). Use `zoneinfo.ZoneInfo` to get the correct local date — do not rely on naive `datetime.now()` which can give the wrong calendar date near midnight UTC.
 
@@ -176,6 +186,10 @@ Show the derived config in plain language:
 
 ### Step 6: Write config
 
+Prefer `wpl profile create <name> --workspace <cwd>` so the new profile is immediately resolvable by cwd (path-based resolution — see `docs/profiles.md`). The command creates the profile directory, writes a minimal `config.json` with `workspaces: [cwd]`, and sets the `active` symlink if none exists.
+
+After `wpl profile create`, populate the rest of the config:
+
 ```bash
 mkdir -p ~/.workplanner/profiles/{profile_name}/session/agendas/archive
 mkdir -p ~/.workplanner/profiles/{profile_name}/briefings
@@ -189,11 +203,9 @@ Write `~/.workplanner/user.json` with:
 - `workday_schedule` (default Mon-Fri)
 - `tmux_recommended`
 
-Write `~/.workplanner/profiles/{profile_name}/config.json` with all gathered config per the schema in `${CLAUDE_PLUGIN_ROOT}/docs/state-schema.md`.
+Update `~/.workplanner/profiles/{profile_name}/config.json` to include the rest of the gathered settings per the schema in `${CLAUDE_PLUGIN_ROOT}/docs/state-schema.md`. Preserve the `workspaces` list written by `wpl profile create`.
 
 Write empty backlog: `~/.workplanner/profiles/{profile_name}/backlog.json` with `{"schema_version": 1, "items": []}`.
-
-Create `active` symlink: `~/.workplanner/profiles/active -> {profile_name}`
 
 Use atomic writes (tmp file → mv) for ALL JSON writes.
 
