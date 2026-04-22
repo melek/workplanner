@@ -120,7 +120,7 @@ After triage, **clear `session.inbox_items[]`** to keep session JSON lean. The d
    - Task list with IDs, estimates, sources, priority tiers
    - Budget summary
    - Backlog awareness footer (low-priority items not scheduled)
-5. Quick fallback prompt: "Anything not on your calendar?" (replaces old "Any meetings today?")
+5. Calendar fallback prompt — fires only if the calendar sweep failed or the integration was unavailable. "Anything not on your calendar?" is not asked when the sweep succeeded.
 
 No "anything to add?" — the user speaks up if needed.
 

@@ -179,7 +179,7 @@ Four layers — use whichever methods the user's messaging integration supports.
 3. Store events in `session.calendar_events[]` — each with `title`, `start`, `end`, `url`
 4. These are inserted as protected blocks during agenda build (Step 3), alongside `config.protected_blocks`
 5. This replaces the manual "Any meetings today?" prompt for calendar-synced meetings
-6. After calendar load, ask only: "Anything not on your calendar?" as a quick fallback
+6. If the calendar sweep fails or the integration is unavailable, fall back to asking "Anything not on your calendar?" once. If the sweep succeeded, do not ask — the mechanical sweep already answered.
 
 ---
 

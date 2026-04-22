@@ -303,16 +303,10 @@ If `config.triage.pre_work` exists, scan for work the user already did this morn
    - **Slack:** Use context MCP slack `search` with `from:me` in the scan window (use `days: 1`). Count distinct threads replied to, messages sent, reactions given. Catches all channels including DMs and ad-hoc threads.
    - **Team blogs:** Use context MCP blog provider `search` with `author: config.user_display_name`, `date_from: today`. Count posts and comments.
 3. **Estimate time spent:** count of distinct interactions × 2-3 minutes (rough heuristic — a Slack reply is ~2m, a blog comment ~3m)
-4. **If estimated time >= `config.triage.pre_work.min_minutes_for_task`** (default: 5):
-   - Insert a completed task at position 0:
-     ```bash
-     wpl add "Morning communication work" --est {estimated_min} --done --started {scan_from} --finished {now_hhmm} --at top --notes "Exclude from team updates. {summary_of_activity}"
-     ```
-   - The summary lists key interactions: "3 Slack threads, 1 blog comment"
-5. **If activity found but below threshold:** add to headlines: "Pre-work: {N} Slack replies, {N} blog comments"
-6. **If no activity found or config absent:** skip silently.
+4. **If any activity is found:** add a single headline line summarizing it: "Pre-work: {N} Slack replies, {N} blog comments". The estimated-minutes total is included parenthetically if it exceeds `config.triage.pre_work.min_minutes_for_task` (default: 5).
+5. **If no activity found or config absent:** skip silently.
 
-This step runs before the inbox sweep so the pre-work task appears at position 0 in the final agenda.
+The scan produces a **headline only**. It does not insert a synthetic "Morning communication work" task into the agenda — the pre-work happened before the session started and isn't agenda work; padding the done-count with it distorts the day's actual task load. The headline keeps the signal visible without the padding.
 
 ### Step 1: Inbox Sweep (checkpoint: `inbox_swept`)
 
@@ -351,21 +345,21 @@ Apply the triage framework from `${CLAUDE_PLUGIN_ROOT}/docs/triage-framework.md`
 1. **Deduplicate** — Match by `dedupe_key`. Merge: keep highest priority, combine context
 2. **Triage & Prioritize** — Assign priority tiers using `config.triage.source_priority` (or defaults). Assign estimates using `config.triage.estimates` (or defaults). Runtime overrides: `overdue: true` → critical; `due_date == today` → at least high.
 3. **"Waiting on you"** — Identify items where someone is blocked on a response (source: `slack-ping`, `github` review request, `linear` with recent user-mentioning comment). Surface as a distinct block in the agenda output (max 3). These are also in the task list at their normal priority.
-4. **Carryover mini-triage** — For every carryover task (whether or not it's at the deferral threshold), surface its `defer_reason` from yesterday's handoff + task state inline. Ask, for each: "does this still matter? re-prioritize / re-scope / send to backlog / keep as-is?" This is the lightweight check that prevents deferred items from silently re-entering the agenda without reconsideration. Apply the user's answer via the appropriate `wpl` command (`wpl remove t<N>`, `wpl backlog --from t<N> --target <date>`, or just leave the task in place). If a task is at `deferral_count >= config.triage.deferrals.reckoning_threshold` (default: 3), escalate to the full reckoning prompt: break down, delegate, drop, timebox, or keep.
+4. **Carryover surfacing** — Present every carryover task's `defer_reason` alongside the task so the user can see the anchor without having to answer a prompt. Behavior splits on `deferral_count`, honoring methodology principles #4 (Carryover Earns Its Place: light-touch re-evaluation) and #5 (Force the Reckoning: heavy prompt at threshold):
 
-   The carryover triage must present `defer_reason` alongside each task, because without that context the "does this still matter?" question has no anchor. Example presentation:
+   - **Below threshold** (`deferral_count < config.triage.deferrals.reckoning_threshold`, default 3): surface read-only. No prompt. The user speaks up if they want to change anything, per the existing "No 'anything to add?'" convention at Step 4.5. Example:
 
-   ```
-   Carryover from yesterday:
-   1. Review Stéphane's PR (t3 est ~30m, ref: HAL-123)
-      Reason yesterday: "waiting on Stéphane to push fixture refactor"
-      Keep / defer / drop / backlog / re-scope?
-   2. Update API docs (t5 est ~15m)
-      Reason yesterday: "underspecified — what do we actually want to document?"
-      Keep / defer / drop / backlog / re-scope?
-   ```
+     ```
+     Carryover from yesterday:
+     1. Review Stéphane's PR (t3 est ~30m, ref: HAL-123)
+        Reason yesterday: "waiting on Stéphane to push fixture refactor"
+     2. Update API docs (t5 est ~15m)
+        Reason yesterday: "underspecified — what do we actually want to document?"
+     ```
 
-   Record outcomes. If the user says "defer again" with a new reason, pass it via `wpl defer --reason "..."` so the updated reason lives on the task.
+   - **At or above threshold:** fire the full reckoning prompt (break down, delegate, drop, timebox, or keep). This is the principle #5 case — enough deferrals to demand a decision, not another light-touch pass. Apply the user's answer via the appropriate `wpl` command (`wpl remove t<N>`, `wpl backlog --from t<N> --target <date>`, `wpl reckon <choice> ...`, or leave in place). If the user defers again with a new reason, pass it via `wpl defer --reason "..."` so the updated reason lives on the task.
+
+   The read-only surfacing is not a demotion of the carryover's importance — it's an acknowledgment that a fresh `defer_reason` from <24h ago is already the sweep's answer to "does this still matter?".
 5. **Filter** — Always: critical, high, overdue, due-today. Medium if budget allows. Cap at `config.triage.filter.task_cap` (default: 10) tasks.
 6. **Order** — Per `config.triage.ordering` (default: critical → high → medium → focus). Carryover ordered by its assigned tier, not auto-first.
 7. **Time structure** — Insert `config.protected_blocks` + `session.calendar_events`. Compute budget.
@@ -408,9 +402,9 @@ Backlog awareness:
   - PROJ-680: Update test fixtures (P4, no deadline)
 ```
 
-5. Quick fallback: "Anything not on your calendar?" (replaces old "Any meetings today?" since calendar events are now swept automatically)
+5. **Calendar fallback prompt — only if the sweep failed.** If the calendar runbook (Runbook 8) returned events successfully, do not ask "Anything not on your calendar?" — the mechanical sweep already answered. The fallback prompt fires only when the calendar integration was unavailable or the runbook errored. Log the trigger inline with the agenda output when it does fire: "Calendar sweep unavailable — anything not on your calendar?"
 
-No "anything to add?" — the user speaks up if needed.
+No "anything to add?" — the user speaks up if needed. The assembly output is designed to be read, not to solicit confirmation at every step.
 
 ## Status Check
 
