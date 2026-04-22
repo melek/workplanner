@@ -12,6 +12,14 @@ Pick up an workplanner task in this Claude session. Collects task context and st
 **Plugin root:** `${CLAUDE_PLUGIN_ROOT}`
 **Transition CLI:** `${CLAUDE_PLUGIN_ROOT}/bin/transition.py`
 
+## Profile resolution
+
+Resolve `PROFILE_ROOT` once and reuse. Do not hardcode `~/.workplanner/profiles/active/…`.
+
+```bash
+PROFILE_ROOT=$(wpl profile whoami --print-root)
+```
+
 ## Arguments
 
 `$ARGUMENTS`
@@ -49,10 +57,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" switch <index>
 
 ### Step 4: Check for existing briefing
 
-Look for a pre-generated briefing in `~/.workplanner/profiles/active/briefings/{session.date}/`:
+Look for a pre-generated briefing in `$PROFILE_ROOT/briefings/{session.date}/`:
 
 ```bash
-ls ~/.workplanner/profiles/active/briefings/{session.date}/ 2>/dev/null | grep "{task.uid}"
+ls "$PROFILE_ROOT/briefings/{session.date}/" 2>/dev/null | grep "{task.uid}"
 ```
 
 A briefing matches if the filename contains the task's UID.

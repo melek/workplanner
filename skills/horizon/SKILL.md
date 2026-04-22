@@ -11,7 +11,14 @@ Review and manage the backlog. The backlog holds work items that don't belong on
 
 **Plugin root:** `${CLAUDE_PLUGIN_ROOT}`
 **Transition CLI:** `${CLAUDE_PLUGIN_ROOT}/bin/transition.py`
-**Backlog file:** `~/.workplanner/profiles/active/backlog.json`
+
+## Profile resolution
+
+Resolve `PROFILE_ROOT` once and reuse. The backlog lives at `$PROFILE_ROOT/backlog.json`, not behind the `active` symlink.
+
+```bash
+PROFILE_ROOT=$(wpl profile whoami --print-root)
+```
 
 ## Arguments
 
@@ -30,7 +37,7 @@ Review and manage the backlog. The backlog holds work items that don't belong on
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" backlog --list
 ```
 
-Also read `~/.workplanner/profiles/active/backlog.json` directly for full field access (target_date, not_before, deadline, created_at, tags).
+Also read `$PROFILE_ROOT/backlog.json` directly for full field access (target_date, not_before, deadline, created_at, tags).
 
 ### Step 2: Group items
 
@@ -96,13 +103,13 @@ Allow multiple actions in one response. Process sequentially.
 After the review, update `last_reviewed` in backlog.json:
 
 ```bash
-python3 -c "
+PROFILE_ROOT="$PROFILE_ROOT" python3 -c "
 import json, os
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-path = Path.home() / '.workplanner' / 'profiles' / 'active' / 'backlog.json'
+path = Path(os.environ['PROFILE_ROOT']) / 'backlog.json'
 with open(path) as f: bl = json.load(f)
 bl['last_reviewed'] = datetime.now().strftime('%Y-%m-%d')
 tmp = str(path) + '.tmp'
@@ -120,7 +127,7 @@ Actions: {N} promoted, {N} rescheduled, {N} dropped
 
 ## Notes
 
-- The backlog is workspace-agnostic — stored at `~/.workplanner/profiles/active/backlog.json`
+- The backlog is profile-scoped — stored at `$PROFILE_ROOT/backlog.json` (each profile has its own)
 - Items enter the backlog via `transition.py backlog "title"`, `transition.py backlog --from t5`, or `transition.py defer --until friday`
 - Morning assembly auto-promotes items whose `target_date` or `deadline` is today or past
 - All mutations go through `transition.py` and are in the undo log

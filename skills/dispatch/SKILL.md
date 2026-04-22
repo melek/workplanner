@@ -12,6 +12,19 @@ Hand off an workplanner task to a Claude Code session in a new tmux pane. The se
 **Plugin root:** `${CLAUDE_PLUGIN_ROOT}`
 **Transition CLI:** `${CLAUDE_PLUGIN_ROOT}/bin/transition.py`
 
+## Profile resolution
+
+Dispatch is the highest-stakes skill for cross-profile launches: if the parent `wpl` invocation uses `--profile other` (or `WPL_PROFILE=other`), the dispatched child must land in `other`'s state tree, not whatever the `active` symlink points at.
+
+Resolve **both** `PROFILE_ROOT` and `PROFILE_NAME` at the top of the skill:
+
+```bash
+PROFILE_ROOT=$(wpl profile whoami --print-root)
+PROFILE_NAME=$(wpl profile whoami --print-name)
+```
+
+Use `$PROFILE_ROOT` for file paths. Pass `WPL_PROFILE=$PROFILE_NAME` to the dispatched child so any `wpl` calls it makes inherit the same profile, regardless of the child's cwd (the user may launch in a different workspace tree).
+
 ## Arguments
 
 `$ARGUMENTS`
@@ -71,21 +84,25 @@ Keep it concise — the dispatched session has full filesystem and CLAUDE.md acc
 ### 4. Write prompt to file
 
 ```bash
-mkdir -p ~/.workplanner/profiles/active/handoffs
+mkdir -p "$PROFILE_ROOT/handoffs"
 ```
 
-Write to `~/.workplanner/profiles/active/handoffs/t{index+1}.md`.
+Write to `$PROFILE_ROOT/handoffs/t{index+1}.md`.
 
 ### 5. Launch tmux pane
 
-Determine working directory from `~/.workplanner/profiles/active/config.json` field `working_directory`, or fall back to `$PWD`.
+Determine working directory from `$PROFILE_ROOT/config.json` field `working_directory`, or fall back to `$PWD`.
 
-Write launcher to `/tmp/dispatch-t{index+1}.sh`:
+Write launcher to `/tmp/dispatch-t{index+1}.sh`. The launcher must export `WPL_PROFILE` so the child's `wpl` calls inherit the resolved profile, not whatever the child's cwd resolves to (which may be a different workspace tree):
+
 ```bash
 #!/bin/bash -l
 cd {working_dir}
-claude --permission-mode plan "$(cat ~/.workplanner/profiles/active/handoffs/t{index+1}.md)"
+export WPL_PROFILE={PROFILE_NAME}
+claude --permission-mode plan "$(cat $PROFILE_ROOT/handoffs/t{index+1}.md)"
 ```
+
+Interpolate `{PROFILE_NAME}` and `$PROFILE_ROOT` into the launcher text at write-time — the child shell won't have the parent's `$PROFILE_NAME` variable unless you bake it in.
 
 Launch:
 ```bash

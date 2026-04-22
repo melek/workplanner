@@ -16,6 +16,16 @@ Start or resume the workday. Routes automatically based on session state.
 **Triage framework:** `${CLAUDE_PLUGIN_ROOT}/docs/triage-framework.md`
 **State schema:** `${CLAUDE_PLUGIN_ROOT}/docs/state-schema.md`
 
+## Profile resolution
+
+Before any file reads / writes that reference profile state, resolve the concrete profile root **once** and reuse it as `PROFILE_ROOT`. Do not hardcode `~/.workplanner/profiles/active/…` — the `active` symlink is no longer the source of truth:
+
+```bash
+PROFILE_ROOT=$(wpl profile whoami --print-root)
+```
+
+All paths in this skill should be expressed relative to `$PROFILE_ROOT`. Subprocesses that this skill launches (`transition.py`, `handoff.py`) do their own path-based resolution automatically.
+
 ## Dashboard Pane (every invocation)
 
 Before routing, ensure the tmux dashboard pane is running. This runs on **every** `/start` invocation — not just during assembly.
@@ -259,7 +269,7 @@ Triggered when `current-session.json` exists but `date` ≠ today.
    If Linear is not configured or not reachable, skip this step silently — the local handoff from step 2 is sufficient for recovery.
 
 4. Extract `deferred` and `blocked` tasks as carryover candidates. Prefer the handoff file (via `handoff.py read`) over the raw session JSON when both are available — a scope pivot captured in the handoff overrides the stale session's original task titles and reasons.
-5. Archive: move the session to `~/.workplanner/profiles/active/session/agendas/archive/{date}.json`.
+5. Archive: move the session to `$PROFILE_ROOT/session/agendas/archive/{date}.json`.
 6. Archive the agenda markdown too if it exists.
 7. Compute `sweep_since` from the stale session's `eod_target` on its `date`.
 8. Proceed to Morning Assembly with carryover list and `sweep_since`.
@@ -335,7 +345,7 @@ This step runs before the inbox sweep so the pre-work task appears at position 0
 
 Execute all 9 runbooks sequentially per `${CLAUDE_PLUGIN_ROOT}/docs/inbox-runbooks.md`:
 
-0. **Backlog sweep** — Read `~/.workplanner/profiles/active/backlog.json`. Auto-promote items to `inbox_items[]`:
+0. **Backlog sweep** — Read `$PROFILE_ROOT/backlog.json`. Auto-promote items to `inbox_items[]`:
    - Items with `target_date <= today` (and `not_before` is null or `<= today`): add with `source: "backlog"`, `priority: "high"`. Remove from backlog.json after promotion.
    - Items with `deadline` and no `target_date`: if deadline is ≤2 days away, add with `source: "backlog"`, `priority: "critical"`, `overdue: true` if past. Remove from backlog.json.
    - Items with `deadline` 3-7 days out: include in "Backlog awareness" footer (see agenda format below), not promoted.

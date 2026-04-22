@@ -1,6 +1,6 @@
 ---
 name: pre-plan
-description: "Generate task briefings and surface workplan revisions. Researches tasks in parallel, writes briefings to ~/.workplanner/profiles/active/briefings/{date}/, then presents strategic revisions (decomposition, estimate corrections, duplicates, completed tasks) as a batch for cross-task awareness."
+description: "Generate task briefings and surface workplan revisions. Researches tasks in parallel, writes briefings to the resolved profile's briefings/{date}/ directory, then presents strategic revisions (decomposition, estimate corrections, duplicates, completed tasks) as a batch for cross-task awareness."
 argument-hint: "[all | t3 | search term] — defaults to all pending tasks"
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, ToolSearch, AskUserQuestion, mcp__linear-server__get_issue, mcp__linear-server__list_comments
 ---
@@ -11,6 +11,16 @@ Generate task briefings ahead of time and surface strategic workplan revisions. 
 
 **Plugin root:** `${CLAUDE_PLUGIN_ROOT}`
 **Transition CLI:** `${CLAUDE_PLUGIN_ROOT}/bin/transition.py`
+
+## Profile resolution
+
+Resolve the concrete profile root **once** at the top of this skill and reuse as `PROFILE_ROOT`. Do not hardcode `~/.workplanner/profiles/active/…` — the `active` symlink is no longer the source of truth.
+
+```bash
+PROFILE_ROOT=$(wpl profile whoami --print-root)
+```
+
+All `briefings/` paths below should be built as `$PROFILE_ROOT/briefings/{session.date}/…`.
 
 ## Arguments
 
@@ -41,7 +51,7 @@ For each selected task, check if a fresh briefing already exists (see Step 3). I
 ### Step 3: Check for existing briefings
 
 ```bash
-ls ~/.workplanner/profiles/active/briefings/{session.date}/ 2>/dev/null
+ls "$PROFILE_ROOT/briefings/{session.date}/" 2>/dev/null
 ```
 
 A briefing is **fresh** if:
@@ -139,12 +149,12 @@ Use `run_in_background: false` for single tasks, `run_in_background: true` for b
 ### Step 6: Write briefings
 
 ```bash
-mkdir -p ~/.workplanner/profiles/active/briefings/{session.date}
+mkdir -p "$PROFILE_ROOT/briefings/{session.date}"
 ```
 
 For each completed agent, extract the `=== BRIEFING ===` section and write to:
 ```
-~/.workplanner/profiles/active/briefings/{session.date}/t{NN}-{uid}-{slug}.md
+$PROFILE_ROOT/briefings/{session.date}/t{NN}-{uid}-{slug}.md
 ```
 
 Where:
@@ -254,7 +264,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" switch {original_current_index
 
 ### Step 9: Write index README
 
-Write `~/.workplanner/profiles/active/briefings/{session.date}/README.md`:
+Write `$PROFILE_ROOT/briefings/{session.date}/README.md`:
 
 ```markdown
 # Briefings — {date}
@@ -288,7 +298,7 @@ Session: {session.date}, {session.week}
 ### Step 10: Report
 
 ```
-Pre-planned {N} tasks → ~/.workplanner/profiles/active/briefings/{date}/
+Pre-planned {N} tasks → $PROFILE_ROOT/briefings/{date}/
 
 Briefings:
   t1 — Fix notification loop (execute, ~30m)
