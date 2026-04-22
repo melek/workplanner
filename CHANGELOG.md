@@ -22,6 +22,7 @@
 
 ### Removed
 
+- **Vestigial `eod_posted` and `eod_linear_comment_url` session fields** (issue #31). After #23 (private-by-default EOD), nothing in the plugin writes `eod_posted` or `eod_linear_comment_url`. The stale-session trigger now reads `eod_handoff_written` — the canonical, actually-set EOD-completion marker. `eod_handoff_written` is documented as the single source of truth for "did EOD complete." Existing session JSON files with the old fields are ignored; they drop off on the next write.
 - **`config.handoffs.*` deprecation warning** (issue #21). The stderr warning for legacy `config.handoffs.{dir,filename_pattern,carryover_from_handoff}` keys has served its grace period and is removed. `load_config()` is silent on load. Keys present in user config are ignored without comment; remove them at your convenience.
 
 ## 1.0.0-beta.2
