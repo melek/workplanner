@@ -45,6 +45,10 @@ Located at `~/.workplanner/profiles/<name>/config.json`. Each profile has its ow
 ```json
 {
   "schema_version": 2,
+  "workspaces": [
+    "/Users/alex/work",
+    "/Users/alex/projects"
+  ],
   "timezone": "America/New_York",
   "eod_target": "17:30",
 
@@ -156,3 +160,4 @@ Located at `~/.workplanner/profiles/<name>/config.json`. Each profile has its ow
 ```
 
 Each section of this config is documented in detail in `docs/state-schema.md`.
+Path-based profile resolution (the `workspaces` field) is covered in `docs/profiles.md`.

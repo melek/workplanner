@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Path-based profile resolution** (issue #10) — Profiles declare which filesystem paths they serve via a `workspaces: [...]` field in `config.json`. Each `wpl` invocation picks a profile by longest-prefix match of cwd against those workspaces, eliminating the race where concurrent sessions in different profiles flipped the `active` symlink out from under each other. Escape hatches: `--profile NAME` CLI flag and `$WPL_PROFILE` env var. Single-profile setups without workspaces keep working via fallback. See `docs/profiles.md`.
+- **New profile subcommands:** `associate`, `disassociate`, `whoami`, `validate`, `migrate`.
+- **Verification script** `bin/test_profile_resolution.py` covering scenarios T1–T10 from the issue brief.
+
+### Changed
+
+- `wpl profile switch` now prints a deprecation note. It still updates the `active` symlink for backward compatibility, but profile resolution no longer consults the symlink.
+- `wpl profile list` shows each profile's workspaces and marks the one matching cwd.
+
 ## 1.0.0-beta.2
 
 Profile-based architecture and public documentation rewrite.
