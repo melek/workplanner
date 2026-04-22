@@ -1,21 +1,21 @@
 # EOD Consolidation Procedure
 
-Internal reference for the end-of-day consolidation pipeline. Wraps up the session, posts updates, and prepares carryover for the next day.
+Internal reference for the end-of-day consolidation pipeline. Wraps up the session, posts updates, writes the local handoff doc, and prepares carryover for the next day.
 
 ---
 
 ## Overview
 
-Four sequential steps. Unlike morning assembly, these are not checkpointed -- they run in order each time EOD is triggered.
+Five sequential steps. Unlike morning assembly, these are not checkpointed -- they run in order each time EOD is triggered.
 
 ---
 
 ## Step 1: Finalize Tasks
 
 1. Check for any tasks with status `in_progress` or `pending`.
-2. Present them to the user and ask once: "done, defer, or blocked?"
-3. The user can answer for all at once (e.g., "t3 done, t4 defer").
-4. Update all statuses accordingly in `current-session.json`.
+2. Present them to the user and ask once: "done, defer (with reason?), or blocked?"
+3. The user can answer for all at once (e.g., "t3 done, t4 defer — waiting on legal").
+4. Update all statuses accordingly in `current-session.json`. Deferred tasks should carry a `defer_reason` where the user provided one — `wpl defer --reason "..."` sets this field on the task, and it persists across carryover.
 
 ---
 
@@ -49,8 +49,17 @@ Four sequential steps. Unlike morning assembly, these are not checkpointed -- th
 
 ---
 
-## Step 4: Carryover
+## Step 4: Local Handoff Doc
+
+1. Write (or update) today's handoff file at `~/.workplanner/profiles/<resolved-profile-name>/handoffs/YYYY-MM-DD.md` using `bin/handoff.py write`.
+2. The file uses a merge-by-section format so concurrent sessions (dispatched tmux panes, multiple Claude instances) each contribute to their own `### <session-id>` sub-section without clobbering others.
+3. Sections written: `Session trajectory`, `Deferred with reasons` (each deferred/blocked task with its `defer_reason`), `Open questions`, `Context for tomorrow`.
+4. Session identifier is auto-detected: `$CLAUDE_SESSION_ID` → `$TMUX_PANE` → process-start-hash fallback.
+5. Idempotent within a session: re-running EOD overwrites this session's sub-sections only.
+6. On success, set `eod_handoff_written: true` in session state (a separate checkpoint from `eod_posted`, which tracks Linear posting).
+
+## Step 5: Carryover & Close
 
 1. Extract all tasks with status `deferred` or `blocked` from the session.
-2. Write the carryover record into session state for the next morning assembly.
-3. Close the session: set a final phase marker indicating the day is complete.
+2. Write the carryover record into session state for the next morning assembly. Tasks keep their `defer_reason` field intact.
+3. Close the session: set `checkpoint: "closed"`.
