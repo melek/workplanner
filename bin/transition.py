@@ -722,8 +722,10 @@ def parse_task_target(raw, session):
     """Parse a task target string. Accepts 't3' (display ID), '2' (0-based index),
     or an 8-char uid. Returns (0-based index, task dict)."""
     tasks = session.get("tasks", [])
+    was_tid = False
     if raw.startswith("t") and raw[1:].isdigit():
         target = int(raw[1:]) - 1
+        was_tid = True
     elif raw.isdigit():
         target = int(raw)
     else:
@@ -731,11 +733,28 @@ def parse_task_target(raw, session):
         for i, t in enumerate(tasks):
             if t.get("uid") == raw:
                 return i, t
-        fail(f"Invalid task target: {raw}")
+        fail(f"Invalid task target: {raw}. "
+             f"Use `wpl status` to see valid IDs and UIDs.")
         return None, None  # unreachable
 
     if target < 0 or target >= len(tasks):
-        fail(f"Index {target} out of range (0-{len(tasks) - 1}).")
+        # Echo the input in the user's own vocabulary. If they typed `tN`,
+        # reply with the valid `tN` range; if they typed a bare integer,
+        # reply with the 0-based range they were using.
+        if was_tid:
+            if tasks:
+                valid = f"valid: t1–t{len(tasks)}"
+            else:
+                valid = "no tasks in this session"
+            fail(f"{raw} out of range ({valid}). "
+                 f"Use `wpl status` to see valid IDs and UIDs.")
+        else:
+            if tasks:
+                valid = f"0-{len(tasks) - 1}"
+            else:
+                valid = "no tasks in this session"
+            fail(f"Index {target} out of range ({valid}). "
+                 f"Use `wpl status` to see valid IDs and UIDs.")
     return target, tasks[target]
 
 
