@@ -35,6 +35,45 @@ WPL_ROOT = Path(os.environ["WPL_ROOT"]) if os.environ.get("WPL_ROOT") else Path.
 PROFILE_OVERRIDE = None
 
 
+def resolved_via_source():
+    """Describe how the current process resolved its profile.
+
+    Returns one of: "cli-flag", "env-var", "cwd-match",
+    "single-profile-fallback", or "unresolved". Mirrors the precedence
+    ladder in `resolve_profile_root()` without re-running any side
+    effects. Surfaced in JSON responses (finding 8) and in the --profile
+    breadcrumb printed to stdout when an override is active.
+    """
+    if PROFILE_OVERRIDE:
+        return "cli-flag"
+    if os.environ.get("WPL_PROFILE", "").strip():
+        return "env-var"
+    cwd = _normalize_path(os.getcwd())
+    matched, _ = _resolve_by_cwd(cwd)
+    if matched is not None:
+        return "cwd-match"
+    all_profiles = list(_iter_profile_dirs())
+    if len(all_profiles) == 1 and not _profile_workspaces(all_profiles[0]):
+        return "single-profile-fallback"
+    return "unresolved"
+
+
+def resolved_via_human(source):
+    """Human-readable label for the breadcrumb line.
+
+    Distinct from `resolved_via_source()` because the stdout line uses
+    prose ("via --profile flag") while the JSON field uses a stable
+    machine identifier ("cli-flag").
+    """
+    return {
+        "cli-flag": "via --profile flag",
+        "env-var": "via $WPL_PROFILE",
+        "cwd-match": "via cwd match",
+        "single-profile-fallback": "via single-profile fallback",
+        "unresolved": "unresolved",
+    }.get(source, source)
+
+
 def _normalize_path(raw):
     """Return the absolute, symlink-resolved form of a path string.
 
@@ -548,23 +587,111 @@ def _config_set_nested(config, key, value):
         d[parts[-1]] = value
 
 
+# Module-level flag so the UTC-fallback warning fires at most once per
+# process — local_today() is called many times per invocation (status
+# header, date fields in payloads, parse_relative_date, decision log,
+# etc.), and one warning is plenty.
+_TZ_FALLBACK_WARNED = False
+
+
 def local_today(config=None):
-    """Return today's date in the configured timezone."""
-    tz_name = (config or {}).get("timezone", "UTC")
+    """Return today's date in the configured timezone.
+
+    Falls back to UTC when no `timezone` key is set on the resolved
+    profile. A one-time stderr warning fires on the first fall-through
+    per process so the LLM / user can see that the `date` field on the
+    header and every JSON payload is UTC-based — not local — and can be
+    off by a day. The default stays UTC: guessing the system timezone
+    heuristically would violate the "context compiler, not decision
+    engine" stance (issue #18, finding 9). The user fixes it
+    deliberately via `wpl config set timezone America/Los_Angeles
+    --rationale "..."`.
+    """
+    global _TZ_FALLBACK_WARNED
+    cfg = config or {}
+    tz_name = cfg.get("timezone")
+    if not tz_name:
+        if not _TZ_FALLBACK_WARNED:
+            _TZ_FALLBACK_WARNED = True
+            print(
+                "warning: profile has no 'timezone' set; using UTC. "
+                "Run 'wpl config set timezone America/Los_Angeles "
+                "--rationale \"...\"' to fix.",
+                file=sys.stderr,
+            )
+        tz_name = "UTC"
     return datetime.now(ZoneInfo(tz_name)).date()
 
 
+# Module-level flag so the stale-session warning fires at most once per
+# process, no matter how many times load_session() is called within a
+# single invocation.
+_STALE_SESSION_WARNED = False
+
+
+def session_staleness(session, config=None):
+    """Return (is_stale, offset_days) for a loaded session.
+
+    `offset_days` is positive when the session's date is older than
+    today (the common case), negative if somehow ahead. Missing or
+    unparseable `date` returns (False, 0) — no noise, nothing to warn
+    about. "Stale" means offset_days >= 1.
+    """
+    date_str = (session or {}).get("date")
+    if not date_str:
+        return False, 0
+    try:
+        session_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return False, 0
+    today = local_today(config)
+    offset = (today - session_date).days
+    return offset >= 1, offset
+
+
 def load_session():
+    """Load current-session.json for the resolved profile.
+
+    On miss, fails with a recovery hint that names `/workplanner:start`
+    so an LLM hitting a clean profile knows the next step (issue #18).
+    On stale session (date older than today), emits a one-line stderr
+    warning — once per process — but does not block. Callers that want
+    the staleness state programmatically can call `session_staleness()`.
+    """
+    global _STALE_SESSION_WARNED
     paths = resolve_paths()
     try:
         with open(paths.SESSION) as f:
             session = json.load(f)
     except FileNotFoundError:
-        fail("No session file found.")
+        fail(
+            "No session file found. Run /workplanner:start to build today's agenda.",
+            next_action="/workplanner:start",
+        )
     except json.JSONDecodeError as e:
         fail(f"Session JSON parse error: {e}")
     if backfill_uids(session):
         save_session(session, undo=False)
+    # Stale-session warning. Fires once per process; the command still
+    # runs (graceful degradation). Emitted to stderr regardless of
+    # output format — stderr is a separate channel, so JSON consumers
+    # parsing stdout are unaffected. JSON consumers also get `is_stale`
+    # and `session_date_offset_days` on the status payload for
+    # programmatic detection.
+    if not _STALE_SESSION_WARNED:
+        try:
+            is_stale, offset = session_staleness(session, load_config())
+        except SystemExit:
+            is_stale, offset = False, 0
+        if is_stale:
+            _STALE_SESSION_WARNED = True
+            date_str = session.get("date", "(unknown)")
+            noun = "day" if offset == 1 else "days"
+            print(
+                f"warning: session is from {date_str} ({offset} {noun} old). "
+                f"Run /workplanner:start to open today's session.",
+                file=sys.stderr,
+            )
     return session
 
 
@@ -620,10 +747,12 @@ def render():
     subprocess.run([sys.executable, str(RENDER)], capture_output=True, env=env)
 
 
-def fail(msg):
+def fail(msg, **extra):
     # Route through emit_error so JSON mode emits structured errors.
-    # Falls back to the historical "error: ..." line in text mode.
-    emit_error(msg)
+    # Falls back to the historical "error: ..." line in text mode. Extra
+    # kwargs (e.g. next_action=...) are attached to the JSON error object;
+    # they're ignored in text mode so the human-facing line stays clean.
+    emit_error(msg, **extra)
 
 
 def now_hhmm():
@@ -662,8 +791,10 @@ def parse_task_target(raw, session):
     """Parse a task target string. Accepts 't3' (display ID), '2' (0-based index),
     or an 8-char uid. Returns (0-based index, task dict)."""
     tasks = session.get("tasks", [])
+    was_tid = False
     if raw.startswith("t") and raw[1:].isdigit():
         target = int(raw[1:]) - 1
+        was_tid = True
     elif raw.isdigit():
         target = int(raw)
     else:
@@ -671,11 +802,28 @@ def parse_task_target(raw, session):
         for i, t in enumerate(tasks):
             if t.get("uid") == raw:
                 return i, t
-        fail(f"Invalid task target: {raw}")
+        fail(f"Invalid task target: {raw}. "
+             f"Use `wpl status` to see valid IDs and UIDs.")
         return None, None  # unreachable
 
     if target < 0 or target >= len(tasks):
-        fail(f"Index {target} out of range (0-{len(tasks) - 1}).")
+        # Echo the input in the user's own vocabulary. If they typed `tN`,
+        # reply with the valid `tN` range; if they typed a bare integer,
+        # reply with the 0-based range they were using.
+        if was_tid:
+            if tasks:
+                valid = f"valid: t1–t{len(tasks)}"
+            else:
+                valid = "no tasks in this session"
+            fail(f"{raw} out of range ({valid}). "
+                 f"Use `wpl status` to see valid IDs and UIDs.")
+        else:
+            if tasks:
+                valid = f"0-{len(tasks) - 1}"
+            else:
+                valid = "no tasks in this session"
+            fail(f"Index {target} out of range ({valid}). "
+                 f"Use `wpl status` to see valid IDs and UIDs.")
     return target, tasks[target]
 
 
@@ -832,13 +980,34 @@ def status_line(session, config=None):
             f" | ~{fmt_duration(remaining)} left"
             f" | EOD: {eod}"
         )
-    else:
+    # No in_progress task. Distinguish "all done" from "nothing active but
+    # pending remain" so the header doesn't lie after a switch->done
+    # sequence that didn't auto-advance. "All tasks complete" fires only
+    # when every task landed in `done`; anything else (pending, blocked,
+    # deferred left over) gets a "No active task" variant with the
+    # residual pending count.
+    pending_count = sum(1 for t in tasks if t.get("status") == "pending")
+    if total_count and done_count == total_count:
         return (
             f"All tasks complete"
             f" | {date_str}{tz_tag}"
             f" | Done: {done_count}/{total_count}"
             f" | EOD: {eod}"
         )
+    if pending_count:
+        header = f"No active task — {pending_count} pending"
+    elif total_count:
+        # Only blocked/deferred tasks left (nothing pending, not all done).
+        header = "No active task"
+    else:
+        header = "No tasks"
+    return (
+        f"{header}"
+        f" | {date_str}{tz_tag}"
+        f" | Done: {done_count}/{total_count}"
+        f" | ~{fmt_duration(remaining)} left"
+        f" | EOD: {eod}"
+    )
 
 
 # ── Output format / shared formatter ─────────────────────────────────
@@ -996,11 +1165,31 @@ def _status_payload(session, config=None):
 
     current = _task_record(idx, task) if task else None
 
+    # Staleness: expose programmatically so JSON consumers can detect a
+    # day-old session without hunting through stderr for the warning
+    # load_session() already emitted.
+    is_stale, offset_days = session_staleness(session, config)
+
+    # Profile resolution breadcrumb for JSON consumers. An LLM
+    # inspecting profile B with `wpl --profile other status` then
+    # forgetting to re-assert the override on a follow-up mutation
+    # can land writes on the cwd-resolved profile; `profile_name` and
+    # `resolved_via` let the consumer detect that gap programmatically.
+    try:
+        profile_name = resolve_paths().PROFILE_NAME
+    except SystemExit:
+        profile_name = None
+
     return {
         "date": today.isoformat(),
+        "session_date": session.get("date"),
+        "is_stale": is_stale,
+        "session_date_offset_days": offset_days,
         "timezone": tz_name,
         "eod_target": eod,
         "checkpoint": session.get("checkpoint"),
+        "profile_name": profile_name,
+        "resolved_via": resolved_via_source(),
         "current_task": current,
         "current_task_index": idx,
         "tasks": session_records(session),
@@ -1026,9 +1215,20 @@ def emit_mutation(action, session, affected=None, config=None, human_line=None):
     in text mode.
     """
     if OUTPUT_FORMAT == "json":
+        try:
+            profile_name = resolve_paths().PROFILE_NAME
+        except SystemExit:
+            profile_name = None
         payload = {
             "result": "ok",
             "action": action,
+            # `profile_name` and `resolved_via` at the top level make
+            # every mutation response self-describing — an LLM chaining
+            # `wpl --profile other status` with a follow-up mutation
+            # can verify the second call landed on the same profile
+            # (finding 8).
+            "profile_name": profile_name,
+            "resolved_via": resolved_via_source(),
             "affected": [
                 {"uid": t.get("uid"), "tid": tid(i), "title": t.get("title")}
                 for (i, t) in (affected or [])
@@ -1520,6 +1720,22 @@ def cmd_backlog(args):
     if args.from_task or args.from_current:
         _backlog_from_session(args)
         return
+    # Foot-gun check: `wpl backlog list` (and common aliases) is a
+    # natural reach for anyone fluent in git/kubectl/linear-cli shape.
+    # The existing routing would silently add a task titled "list"
+    # instead. Redirect only when the *entire* title is the conflicting
+    # word — a multi-word title that starts with "list" (e.g.
+    # "list of onboarding tasks") still passes through. See issue #18,
+    # finding 7.
+    _SUBCOMMAND_ALIASES = {"list", "ls", "show"}
+    title_parts = getattr(args, "title", None) or []
+    if len(title_parts) == 1 and title_parts[0] in _SUBCOMMAND_ALIASES:
+        emit_error(
+            f"'wpl backlog {title_parts[0]}' is not a subcommand; "
+            f"did you mean 'wpl backlog --list'?",
+            suggestion="wpl backlog --list",
+            typed=title_parts[0],
+        )
     # Default: add new item
     _backlog_add(args)
 
@@ -2388,6 +2604,110 @@ def cmd_config(args):
 # ── CLI ──────────────────────────────────────────────────────────────
 
 
+# Verbs that intentionally take no task-target positional: they operate
+# only on the current task (the "two bookends" semantics). When the LLM
+# reaches for `wpl done t3`, we short-circuit argparse with a redirect
+# rather than letting it surface `unrecognized arguments: t3` (done /
+# defer) or silently swallow `t3` as a blocking reason (blocked).
+_CURRENT_TASK_VERBS = {"done", "blocked", "defer"}
+
+
+def _looks_like_task_target(token):
+    """True iff `token` plausibly names a task (tN or 8-char hex uid).
+
+    Deliberately conservative: we only want to redirect the LLM when it
+    clearly mis-aimed a task at a current-only verb. A blocked reason
+    like "blocked on 3 tests" must pass through unchanged — bare
+    integers are NOT flagged.
+    """
+    if not token or token.startswith("-"):
+        return False
+    if token.startswith("t") and len(token) > 1 and token[1:].isdigit():
+        return True
+    # 8-char hex uid — mirrors generate_uid().
+    if len(token) == 8 and all(c in "0123456789abcdef" for c in token):
+        return True
+    return False
+
+
+def _intercept_current_task_verb_misuse(argv):
+    """Redirect `wpl {done,blocked,defer} tN` to the switch-then-verb pattern.
+
+    Walks argv looking for (optional) global flags, then the subcommand.
+    If the subcommand is a current-task verb and any following
+    positional is a task target, emit a structured error and exit.
+    Does not widen the verb surface — this is purely a diagnostic
+    redirect.
+    """
+    i = 0
+    # Skip global flags known to take a value or be a boolean switch.
+    while i < len(argv):
+        tok = argv[i]
+        if tok in ("--format", "--profile"):
+            i += 2
+            continue
+        if tok.startswith("--format=") or tok.startswith("--profile="):
+            i += 1
+            continue
+        if tok in ("-h", "--help"):
+            # Let argparse handle help.
+            return
+        break
+    if i >= len(argv):
+        return
+    verb = argv[i]
+    if verb not in _CURRENT_TASK_VERBS:
+        return
+    # Scan subsequent tokens for a mis-aimed task target. Stop at
+    # recognised verb-local flags so `wpl defer --until friday` isn't
+    # second-guessed and so `wpl blocked --reason ...` style usage
+    # (should it ever land) isn't confused.
+    for token in argv[i + 1:]:
+        if token.startswith("-"):
+            # Any flag ends the scan. Argparse handles flag validation.
+            return
+        if _looks_like_task_target(token):
+            # Text vs JSON: emit_error handles the branching. Exit 1
+            # preserves the "precondition failure" contract for every
+            # wpl error path.
+            # Need OUTPUT_FORMAT set before emit_error is used; peek at
+            # global flags we already skipped.
+            global OUTPUT_FORMAT
+            OUTPUT_FORMAT = _peek_output_format(argv) or "text"
+            # Per-verb phrasing so the "different task" sentence reads
+            # naturally in english. All three map to the same pattern:
+            # switch to the target first, then run the current-task verb.
+            phrasing = {
+                "done": "mark a different task done",
+                "blocked": "mark a different task blocked",
+                "defer": "defer a different task",
+            }[verb]
+            emit_error(
+                f"'{verb}' operates on the current task only (no task target). "
+                f"To {phrasing}, run: wpl switch {token} && wpl {verb}",
+                verb=verb,
+                target=token,
+                suggestion=f"wpl switch {token} && wpl {verb}",
+            )
+    # No mis-aimed target found — let argparse proceed normally.
+    return
+
+
+def _peek_output_format(argv):
+    """Return the --format value from argv, or None. Pre-parse helper.
+
+    Called before argparse runs so errors emitted during the pre-parse
+    hook can honour --format json. Doesn't validate — an invalid value
+    just falls through to the argparse default path.
+    """
+    for i, tok in enumerate(argv):
+        if tok == "--format" and i + 1 < len(argv):
+            return argv[i + 1]
+        if tok.startswith("--format="):
+            return tok.split("=", 1)[1]
+    return None
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="transition.py",
@@ -2479,7 +2799,10 @@ def build_parser():
     p_backlog.add_argument("--tag", type=str, action="append", default=None, help="Tag (repeatable).")
     p_backlog.add_argument("--from", dest="from_task", type=str, default=None, help="Move session task to backlog (t3, index, or uid).")
     p_backlog.add_argument("--from-current", action="store_true", help="Move current task to backlog.")
-    p_backlog.add_argument("--list", dest="list_items", action="store_true", help="List backlog items.")
+    p_backlog.add_argument("--list", dest="list_items", action="store_true",
+                           help="List backlog items (use this flag rather than "
+                                "a `list` subcommand — `wpl backlog list` has no "
+                                "subcommand form).")
     p_backlog.add_argument("--promote", type=str, default=None, help="Promote backlog item to today's session (uid).")
     p_backlog.add_argument("--drop", type=str, default=None, help="Remove backlog item (uid).")
     p_backlog.add_argument("--edit", type=str, default=None, help="Edit backlog item fields (uid).")
@@ -2684,6 +3007,19 @@ def main():
         print("You can remove it after verifying everything works.")
 
     ensure_wrapper()
+
+    # Pre-parse hook: catch the common "verbs operate on current task only"
+    # footgun before argparse does. `done`, `blocked`, and `defer` take no
+    # task-target positional — they operate on whatever `current_task_index`
+    # points at. Argparse's default message (`unrecognized arguments: t3`,
+    # or silent acceptance for `blocked` where extras become the reason)
+    # doesn't tell the LLM how to recover. Redirect to the documented
+    # two-step pattern instead. Detection is conservative: only `tN`
+    # (digits after t) or an 8-char hex uid is treated as a mis-aimed
+    # task target. Real `blocked` reasons that happen to contain numbers
+    # still pass through untouched. See issue #18, finding 5.
+    _intercept_current_task_verb_misuse(sys.argv[1:])
+
     parser = build_parser()
     args = parser.parse_args()
     # Set module-level output format for this invocation so commands can
@@ -2694,6 +3030,23 @@ def main():
     # over $WPL_PROFILE env var, which in turn wins over path-based
     # resolution. See resolve_profile_root().
     PROFILE_OVERRIDE = getattr(args, "profile_override", None) or None
+
+    # Profile breadcrumb: when an override is active (CLI flag or env
+    # var), prepend a one-line note to stdout so the LLM sees, in its
+    # own output, that this invocation landed on a non-cwd profile. JSON
+    # mode does the same via `profile_name` / `resolved_via` fields on
+    # every response; no extra stdout line there (would break JSON
+    # parsing). See issue #18, finding 8.
+    if OUTPUT_FORMAT == "text":
+        source = resolved_via_source()
+        if source in ("cli-flag", "env-var"):
+            try:
+                profile_name = resolve_paths().PROFILE_NAME
+            except SystemExit:
+                profile_name = None
+            if profile_name:
+                print(f"(profile: {profile_name} — {resolved_via_human(source)})")
+
     handler = DISPATCH.get(args.command)
     if handler:
         handler(args)

@@ -6,21 +6,41 @@
 # invocation, so we defer to `wpl` itself (which does path-based cwd
 # resolution). This fixes the split-brain described in issue #16: the
 # hook's cwd is the session's cwd, which is what path-based resolution
-# keys off anyway, so the right profile is selected automatically. The
-# hardcoded `profiles/active/...` path is gone.
+# keys off anyway, so the right profile is selected automatically.
+#
+# Graceful fallback: if `wpl` isn't available or its resolver can't
+# claim the cwd, fall back to $HOME/.workplanner/profiles/active so a
+# single-profile setup (or any user whose cwd sits outside every
+# declared workspace) still gets context injected. Hook must fit in the
+# 5s SessionStart timeout — keep every branch lean.
 
 WPL_BIN="${WPL_BIN:-$HOME/.workplanner/bin/wpl}"
 if [ ! -x "$WPL_BIN" ]; then
     WPL_BIN=$(command -v wpl 2>/dev/null || true)
 fi
-[ -n "${WPL_BIN:-}" ] && [ -x "$WPL_BIN" ] || exit 0
 
-# Resolve the profile root once via `wpl`. If resolution fails (no profile
-# associated with cwd, no fallback match), silently exit — nothing to inject.
-# `WPL_CHILD=1` suppresses the interactive first-run prompt since there's no
-# TTY here.
-PROFILE_ROOT=$(WPL_CHILD=1 "$WPL_BIN" profile whoami --print-root 2>/dev/null)
-[ -n "$PROFILE_ROOT" ] || exit 0
+PROFILE_ROOT=""
+if [ -n "${WPL_BIN:-}" ] && [ -x "$WPL_BIN" ]; then
+    # Resolve the profile root once via `wpl`. If resolution fails (no
+    # profile claims this cwd, no single-profile fallback available),
+    # the call exits non-zero and stderr is swallowed. WPL_CHILD=1
+    # suppresses the interactive first-run prompt since there's no TTY
+    # here.
+    PROFILE_ROOT=$(WPL_CHILD=1 "$WPL_BIN" profile whoami --print-root 2>/dev/null)
+fi
+
+# Fallback: the legacy `active` symlink. Preserved so single-profile
+# setups and cwd-outside-any-workspace sessions still get a workplan.
+# Respect $WPL_ROOT so test runs don't leak into the real profile tree.
+if [ -z "$PROFILE_ROOT" ]; then
+    WPL_ROOT_DIR="${WPL_ROOT:-$HOME/.workplanner}"
+    FALLBACK="$WPL_ROOT_DIR/profiles/active"
+    if [ -d "$FALLBACK" ]; then
+        PROFILE_ROOT="$FALLBACK"
+    else
+        exit 0
+    fi
+fi
 
 SESSION="$PROFILE_ROOT/session/current-session.json"
 [ -f "$SESSION" ] || exit 0

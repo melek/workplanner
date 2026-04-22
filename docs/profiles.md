@@ -151,3 +151,22 @@ automatically.
   block on stdin.
 - `WPL_ROOT=/some/dir` — redirects the entire state tree. Useful for
   tests and sandbox setups.
+
+## Override breadcrumb
+
+Whenever an override resolves the profile (`--profile` or
+`$WPL_PROFILE`), the CLI surfaces the source so subsequent calls don't
+silently land on the wrong profile.
+
+- **Text mode.** A one-line breadcrumb is prepended to stdout:
+  `(profile: other — via --profile flag)` or
+  `(profile: other — via $WPL_PROFILE)`. Cwd-match resolution stays
+  silent — the common case is unchanged.
+- **JSON mode.** Every status payload and every mutation response
+  carries `profile_name` and `resolved_via` at the top level.
+  `resolved_via` is one of: `cli-flag`, `env-var`, `cwd-match`,
+  `single-profile-fallback`, `unresolved`.
+
+The breadcrumb does not affect behavior — it's a cognitive cue so an
+LLM chaining `wpl --profile other status` with a follow-up mutation
+can verify the second call landed on the same profile.
