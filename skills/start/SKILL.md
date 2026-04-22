@@ -215,29 +215,56 @@ Confirm: "Config saved. Run `/workplanner:start` again to begin your day."
 
 Triggered when `current-session.json` exists but `date` ≠ today.
 
-1. Read the stale session
-2. If `eod_posted: false` — resolve the missed EOD before proceeding. Branch on `config.handoffs`:
+1. Read the stale session.
 
-   **(a) If `config.handoffs.dir` is set** (local-handoff mode — use this when the EOD artifact is a file rather than an external post):
-   - Target path: `{config.handoffs.dir}/{stale_session.date}.md` (filename resolved via `config.handoffs.filename_pattern`, default `{date}.md`).
-   - If the file is **missing**: draft a handoff from the stale session (done / deferred / blocked summary, notes, open threads, any scope decisions captured in task notes) and write it atomically. No prompt — the file IS the EOD artifact. Augment with Linear `completedAt` / recent-updates for the session's date window and any relevant repo state (new directories, uncommitted files) when the session JSON alone is thin. Log: "Backfilled handoff: {path}".
-   - If the file is **present**: log "Handoff already written for {date}" and continue.
-   - **If `config.handoffs.carryover_from_handoff` is true** (default when `handoffs.dir` is set): the handoff file is authoritative for carryover framing. Read it and let its "Deferred" / "Deferred → tomorrow" section override stale-session task titles and scope. This prevents stale framings from persisting across multiple missed EODs — a scope pivot captured in the handoff file propagates forward even if the session JSON didn't update.
+2. **If `eod_posted: false` — backfill a local handoff for the stale date.**
 
-   **(b) Otherwise** (external-posting mode, e.g., Linear):
-   - Show yesterday's task summary: done count, deferred/blocked count, total
-   - Draft a Linear update for yesterday (same format as `/eod` Step 2)
+   The handoff path is workplanner-owned: `~/.workplanner/profiles/<resolved-name>/handoffs/{stale_session.date}.md`. Check whether this session's backfill contribution already exists. Resolve the path and inspect it via `bin/handoff.py`:
+
+   ```bash
+   STALE_DATE="<stale_session.date>"
+   python3 "${CLAUDE_PLUGIN_ROOT}/bin/handoff.py" read --date "$STALE_DATE"
+   ```
+
+   The read output is a JSON blob with `sections` keyed by section name → session-id → body. Look for a sub-section whose session-id starts with `stale-recovery-` under any section (most commonly `Session trajectory` or `Deferred with reasons`).
+
+   - **If a `stale-recovery-*` sub-section is already present for this date:** log "Handoff already written for {stale_session.date}" and continue to step 3. This makes re-running `/start` on the same stale state idempotent — we do not rewrite an already-backfilled handoff.
+   - **Otherwise:** draft a structured handoff from the stale session and write it via `handoff.py write` with a session-id that is visibly distinct from normal-path IDs:
+     ```bash
+     python3 "${CLAUDE_PLUGIN_ROOT}/bin/handoff.py" write \
+       --session-id "stale-recovery-$STALE_DATE" \
+       --date "$STALE_DATE" \
+       --trajectory "<done / deferred / blocked summary + notes + scope decisions>" \
+       --deferred-json '[{"title":"...","uid":"...","reason":"..."}]' \
+       --open-questions "<open threads noted in the session>" \
+       --context "<any pointers for today that the stale session implies>"
+     ```
+     Draft each section from the stale session JSON (done / deferred / blocked counts + titles, any `defer_reason`s, task notes, scope decisions). When the session JSON alone is thin, augment with:
+     - Linear `completedAt` / recent-updates for the session's date window (for tasks that moved state after the session last wrote).
+     - Relevant repo state — new directories, uncommitted files — if a task in the stale session was clearly mid-work.
+
+     Log: "Backfilled handoff: {path}".
+
+   No prompt. The backfill is silent recovery — the file IS the handoff artifact, and Step 0.25 below will read it the same way it reads a normal-path handoff written by yesterday's `/eod`.
+
+3. **External posting (Linear) — optional, orthogonal to the local handoff.**
+
+   Posting a retroactive daily update to Linear is a separate decision from writing the local handoff. Offer it only if the user has Linear integration wired (i.e., Linear MCP is up and `personal_sub_issue` is set on the stale session or resolvable via `config.weekly_focus`):
+
+   - Draft a Linear update for the stale date in the `/eod` Step 2 format.
    - Ask: "Post yesterday's update to your weekly check-in? [Post / Skip]"
-   - If "Post": use Linear MCP `save_comment` on yesterday's `personal_sub_issue`. Note success.
-   - If "Skip": note "Skipped retroactive EOD" and continue.
+   - On Post: use Linear MCP `save_comment` on the stale session's `personal_sub_issue`. Note success.
+   - On Skip: note "Skipped retroactive Linear post" and continue.
 
-   Why this exists: missed EODs otherwise cause stale task framings to carry forward unchanged for multiple days. The handoff file — when used — captures scope pivots, decisions, and context that session JSON alone cannot reconstruct the morning after.
+   If Linear is not configured or not reachable, skip this step silently — the local handoff from step 2 is sufficient for recovery.
 
-3. Extract `deferred` and `blocked` tasks as carryover candidates (from the handoff file when in local-handoff mode, otherwise from session JSON)
-4. Archive: move session to `~/.workplanner/profiles/active/session/agendas/archive/{date}.json`
-5. Archive the agenda markdown too if it exists
-6. Compute `sweep_since` from the stale session's `eod_target` on its `date`
-7. Proceed to Morning Assembly with carryover list and `sweep_since`
+4. Extract `deferred` and `blocked` tasks as carryover candidates. Prefer the handoff file (via `handoff.py read`) over the raw session JSON when both are available — a scope pivot captured in the handoff overrides the stale session's original task titles and reasons.
+5. Archive: move the session to `~/.workplanner/profiles/active/session/agendas/archive/{date}.json`.
+6. Archive the agenda markdown too if it exists.
+7. Compute `sweep_since` from the stale session's `eod_target` on its `date`.
+8. Proceed to Morning Assembly with carryover list and `sweep_since`.
+
+Why this exists: missed EODs otherwise cause stale task framings to carry forward unchanged for multiple days. The backfilled handoff captures scope pivots, decisions, and context that session JSON alone cannot reconstruct the morning after — and because it lands at the same path as a normal-path handoff, Step 0.25 finds it the next morning without any special-case logic.
 
 ## Morning Assembly
 
