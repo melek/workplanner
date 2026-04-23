@@ -49,6 +49,8 @@ Parse the JSON output. If no session exists, stop: "No active session. Run `/wor
 
 If the task is already `done`, `blocked`, or `deferred`, warn and confirm before proceeding.
 
+**If the task is a parent (has children):** the children are related sub-steps that share the parent's gate. Read them alongside the parent and present the whole group in Step 6 rather than picking up the parent in isolation. Children are tasks whose `parent` field points at this task's index; `wpl status` renders them nested below the parent.
+
 ### Step 3: Mark in_progress
 
 ```bash

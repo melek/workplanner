@@ -452,12 +452,15 @@ wpl defer
 wpl defer --until friday          # defer to backlog with target date
 wpl add "Review PR #4521" --est 30
 wpl add "1:1 with Ash" --est 30 --at top --done --started 09:00 --finished 09:30
+wpl add "Sub-step" --est 20 --parent t1     # nested under t1; see "Sub-tasks" in docs/task-transitions.md
 wpl move t5 --to t2
 wpl switch t4
 wpl switch t4 --no-pause          # keep previous task in_progress (parallel work)
 wpl backlog "Future task" --est 30 --target next-week
 wpl status
 ```
+
+**Parent/child for project work.** When a task rolls up several related sub-steps that share context and a single gate (an RSM milestone, a PR checklist, an incident response), create a parent and add the sub-steps with `--parent <id>` rather than as flat siblings. The dashboard renders them as a tree. Flat siblings still read better for a normal day's mixed-topic agenda.
 
 **During the day, always use `wpl`** (or `~/.workplanner/bin/wpl`) for task state changes — it handles atomic writes, validation, and re-rendering. During assembly and EOD, write JSON directly with atomic writes (tmp → mv).
 

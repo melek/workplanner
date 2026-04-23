@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Surface the sub-task (`--parent`) feature in skill prose and task-transition docs** (issue #33). The engine has supported `wpl add --parent <id>` (and the dashboard renders parent/child trees) for several versions, but the feature was invisible in `docs/task-transitions.md`, `skills/start/SKILL.md`, `docs/morning-assembly.md`, and `skills/pickup/SKILL.md` — so LLMs defaulted to flat sibling lists and project-scoped work was never grouped. Drift closed: the `add` flags table now lists `--parent`, there's a new "Sub-tasks" section in task-transitions with the CLI pattern and when-to-use guidance, the start-skill task-transition example includes a `--parent` line with a "parent/child for project work" explainer, Step 3 of morning-assembly adds a "Parent/child for project work" paragraph, and pickup notes that a parent's children should be inspected as a group. `bin/test_start_prompts.py` gains four regression assertions so the drift can't silently re-open.
+
 ## 1.0.0-beta.4
 
 Session-tidy release — each change is a small, self-contained PR guided by the plugin's seven methodology principles and the three-layer architecture. Six merged PRs (#22, #24, #26, #28, #30, #32) over issues #21, #23, #25, #27, #29, #31.

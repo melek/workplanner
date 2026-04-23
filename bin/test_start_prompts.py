@@ -19,6 +19,8 @@ REPO = Path(__file__).resolve().parent.parent
 START_SKILL = REPO / "skills" / "start" / "SKILL.md"
 INBOX_RUNBOOKS = REPO / "docs" / "inbox-runbooks.md"
 MORNING_ASSEMBLY = REPO / "docs" / "morning-assembly.md"
+TASK_TRANSITIONS = REPO / "docs" / "task-transitions.md"
+PICKUP_SKILL = REPO / "skills" / "pickup" / "SKILL.md"
 
 
 def _read(path):
@@ -115,6 +117,36 @@ def test_dashboard_pane_never_skips_spawn():
                      "dashboard_pane: never branch language")
 
 
+def test_subtask_feature_surfaced_in_task_transitions():
+    """--parent flag must be documented in docs/task-transitions.md (issue #33)."""
+    text = _read(TASK_TRANSITIONS)
+    _assert_contains(text, "--parent",
+                     "task-transitions: --parent flag in add table")
+    _assert_contains(text, "Sub-tasks",
+                     "task-transitions: Sub-tasks section heading")
+
+
+def test_subtask_feature_surfaced_in_start_skill():
+    """start SKILL must mention --parent in the task-transitions example (issue #33)."""
+    text = _read(START_SKILL)
+    _assert_contains(text, "--parent",
+                     "start skill: --parent in transition example")
+
+
+def test_subtask_feature_surfaced_in_morning_assembly():
+    """morning-assembly.md must mention parent/child in Step 3 (issue #33)."""
+    text = _read(MORNING_ASSEMBLY)
+    _assert_contains(text, "Parent/child for project work",
+                     "morning-assembly: parent/child section")
+
+
+def test_subtask_feature_surfaced_in_pickup():
+    """pickup SKILL must mention parent/children handling (issue #33)."""
+    text = _read(PICKUP_SKILL)
+    _assert_contains(text, "parent",
+                     "pickup skill: parent task handling")
+
+
 def main():
     tests = [
         test_pre_work_no_task_insertion,
@@ -125,6 +157,10 @@ def main():
         test_calendar_fallback_gated_in_assembly_doc,
         test_dashboard_pane_policy_referenced,
         test_dashboard_pane_never_skips_spawn,
+        test_subtask_feature_surfaced_in_task_transitions,
+        test_subtask_feature_surfaced_in_start_skill,
+        test_subtask_feature_surfaced_in_morning_assembly,
+        test_subtask_feature_surfaced_in_pickup,
     ]
     failures = 0
     for t in tests:
