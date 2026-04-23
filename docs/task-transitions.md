@@ -107,10 +107,29 @@ wpl config set timezone America/Los_Angeles --rationale "..."
 | `--done` | false | Mark as already completed |
 | `--started HH:MM` | auto | Start time (used with `--done`) |
 | `--finished HH:MM` | now | Finish time (used with `--done`) |
+| `--parent <id>` | — | Create as a sub-task under the named parent (`t3`, index, or uid). See "Sub-tasks" below. |
 | `--source VAL` | manual | Source tag |
 | `--ref VAL` | — | Issue reference (e.g., `PROJ-123`) |
 | `--url VAL` | — | Issue URL |
 | `--notes VAL` | — | Free-text notes |
+
+### Sub-tasks
+
+Tasks can be nested one level via `--parent`. When the parent rolls up several related sub-steps that share context and a single gate, use this instead of a flat sibling list. The dashboard renders parents with their children as a tree.
+
+```bash
+# Parent: the umbrella task
+wpl add "RSM: M1 consolidation" --est 140 --at top
+
+# Children: each step under the parent (parent is now t1)
+wpl add "Check Paulina's workflow blocker" --est 30 --parent t1
+wpl add "Vendor judge prompt + schema" --est 20 --parent t1
+wpl add "Pull HAPAI candidates into v0.jsonl" --est 45 --parent t1
+```
+
+When to use it: project-scoped work with multiple sub-steps, a shared gate, and enough coherence that the parent is a meaningful unit of progress. When to skip it: a normal day's mixed-topic agenda — flat siblings read better than a tree of unrelated items.
+
+The `parent` field is an integer index into the task array (see `docs/state-schema.md`). There is no re-parent command today; if you need to restructure an existing flat group, remove the siblings and re-add them with `--parent`.
 
 All mutating commands:
 1. Read and validate `current-session.json`

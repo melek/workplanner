@@ -100,6 +100,10 @@ Transform `session.inbox_items[]` into `session.tasks[]`.
 5. **Order** — Carryover → Critical → High (due-today first) → Medium → Focus/check-in
 6. **Insert Time Structure** — Protected blocks + calendar events. Compute budget.
 
+### Parent/child for project work
+
+When several inbox items belong to one project and share a gate (a milestone, a PR checklist, a consolidation day), surface them as a parent with children rather than as flat siblings. Create the parent task first and add the sub-steps with `--parent <id>`; the dashboard renders them as a tree. See `docs/task-transitions.md` → "Sub-tasks" for the CLI pattern. A normal mixed-topic agenda stays flat — parent/child is for the case where the hierarchy is doing real work.
+
 After triage, **clear `session.inbox_items[]`** to keep session JSON lean. The data has been consumed into `session.tasks[]` and `session.headlines[]`.
 
 ---
