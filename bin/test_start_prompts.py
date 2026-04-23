@@ -148,20 +148,28 @@ def test_subtask_feature_surfaced_in_pickup():
 
 
 def test_methodology_pointer_in_session_hook():
-    """SessionStart hook must emit the methodology pointer (issue #35).
+    """SessionStart hook must emit the methodology pointer with an
+    apply-not-just-consult directive (issue #35).
 
     The hook is the only channel that reliably reaches cold-start Claude
-    sessions tied to a workplanner profile — plugin CLAUDE.md is not
-    ambiently loaded. This asserts the pointer is in the emitted output.
+    sessions tied to a workplanner profile. Discoverability alone proved
+    insufficient — a real-session test showed the agent read
+    methodology.md but reasoned in generic PM vocabulary anyway. The
+    directive was strengthened from "consult" to "apply + cite at least
+    one principle by name."
     """
     hook_path = REPO / "bin" / "session-hook.sh"
     text = _read(hook_path)
     _assert_contains(text, "methodology.md",
                      "session-hook: methodology.md pointer")
-    _assert_contains(text, "work shape",
+    _assert_contains(text, "work-shape questions",
                      "session-hook: work-shape trigger phrase")
-    _assert_contains(text, "Principle-indexed reasoning",
-                     "session-hook: principle-indexed framing")
+    _assert_contains(text, "apply its seven principles by name",
+                     "session-hook: apply-not-just-consult directive")
+    _assert_contains(text, "Cite at least one principle",
+                     "session-hook: cite-principle instruction")
+    _assert_contains(text, "if you deviate from a principle, name it",
+                     "session-hook: deviation-must-be-named rule")
 
 
 def main():
