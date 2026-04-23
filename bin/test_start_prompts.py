@@ -147,6 +147,23 @@ def test_subtask_feature_surfaced_in_pickup():
                      "pickup skill: parent task handling")
 
 
+def test_methodology_pointer_in_session_hook():
+    """SessionStart hook must emit the methodology pointer (issue #35).
+
+    The hook is the only channel that reliably reaches cold-start Claude
+    sessions tied to a workplanner profile — plugin CLAUDE.md is not
+    ambiently loaded. This asserts the pointer is in the emitted output.
+    """
+    hook_path = REPO / "bin" / "session-hook.sh"
+    text = _read(hook_path)
+    _assert_contains(text, "methodology.md",
+                     "session-hook: methodology.md pointer")
+    _assert_contains(text, "work shape",
+                     "session-hook: work-shape trigger phrase")
+    _assert_contains(text, "Principle-indexed reasoning",
+                     "session-hook: principle-indexed framing")
+
+
 def main():
     tests = [
         test_pre_work_no_task_insertion,
@@ -161,6 +178,7 @@ def main():
         test_subtask_feature_surfaced_in_start_skill,
         test_subtask_feature_surfaced_in_morning_assembly,
         test_subtask_feature_surfaced_in_pickup,
+        test_methodology_pointer_in_session_hook,
     ]
     failures = 0
     for t in tests:

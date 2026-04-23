@@ -92,5 +92,11 @@ if other_dispatched:
 
 lines.append('  Use wpl to manage tasks (e.g., wpl done, wpl status) — add ~/.workplanner/bin to PATH')
 
+# Disposition line, kept separate by a blank to avoid being skimmed as more state.
+plugin_root = '$CLAUDE_PLUGIN_ROOT'
+methodology_path = plugin_root.rstrip('/') + '/docs/methodology.md' if plugin_root else 'docs/methodology.md (in the workplanner plugin)'
+lines.append('')
+lines.append(f'Operating under the workplanner EA/PA methodology. When asked about work shape (prioritization, triage, carryover, deferral, budget, scoping, rhythm), consult {methodology_path} before reasoning from first principles. Principle-indexed reasoning beats reinvented PM heuristics.')
+
 print('\n'.join(lines))
 " 2>/dev/null
