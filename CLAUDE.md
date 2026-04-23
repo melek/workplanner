@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Claude Code plugin for daily work-planning. Sweeps inboxes each morning, builds a prioritized agenda, tracks task transitions via CLI, consolidates EOD updates. Supports multiple life contexts (work, home) via profiles.
 
+## EA/PA methodology — when to consult
+
+This plugin operates under a seven-principle EA/PA methodology ([`docs/methodology.md`](docs/methodology.md)) with a triage framework ([`docs/triage-framework.md`](docs/triage-framework.md)) that applies it to the daily agenda. When asked a work-shape question in a session tied to a workplanner profile — prioritization, triage, carryover, deferral, budget, scoping, rhythm — consult those docs before reasoning from first principles. The framework is opinionated-but-adjustable: deviations go through `wpl config` and are recorded in the decision log (`wpl config diff`, `wpl decision list`). Principle-indexed reasoning (e.g. "honors #4 Carryover Earns Its Place + #5 Force the Reckoning") beats reinvented PM heuristics.
+
 ## Development
 
 No build step, no test suite, no linter. Python 3.9+ stdlib only (no dependencies). All scripts use `#!/usr/bin/env python3`.
