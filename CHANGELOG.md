@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+## 1.0.0-beta.5
+
+Methodology-reach release — four merged PRs (#34, #36/#37/#38, this) across issues #33, #35, #40, focused on closing the gap between the plugin's engine capabilities and the skill prose that teaches them to the LLM.
+
 ### Changed
 
+- **Document the graceful-degradation misapplication trap** (issue #40). A cold-session retest of the methodology reach surfaced one concrete misapplication: principle #7 (Graceful Degradation) was cited in a prioritization audit to justify criticality-based task sequencing. That's a priority-tier argument dressed in principle language. Added a "Not an argument for..." callout to principle #7 in `docs/methodology.md` explicitly naming the criticality-sequencing trap and pointing at `docs/triage-framework.md` as the right surface for that class of question. Single observed trap, single callout; no generalized framework. Follow-up traps get their own one-line callouts as and when cold-session tests surface them. (Issues #39 was filed for a broader "reasoning scaffolds + decision trees + auditor patterns" program but closed as over-scoped — the trust goal is better served by periodic cold-session retests catching drift than by bureaucratizing every EA-shape response.)
 - **Make the EA/PA methodology reach and shape ad-hoc work-shape questions** (issue #35). Two attempts and two verification tests:
   - **Attempt 1 (PR #36):** Pointer added to the plugin's root `CLAUDE.md` on the assumption that plugin CLAUDE.md loads ambiently. Real-session test contradicted that assumption — the session confirmed it had read no plugin documentation.
   - **Attempt 2 (PR #37):** Pointer moved to the SessionStart hook (`bin/session-hook.sh`), which is already proven to reach sessions via its workplan-status output. Retest: the agent did read `docs/methodology.md`, but reasoned in generic PM vocabulary ("critical path", "budget", "risk") without applying any of the seven principles by name.

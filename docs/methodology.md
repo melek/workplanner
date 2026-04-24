@@ -52,6 +52,8 @@ Any data source can fail. Any MCP can be absent. The system always produces *som
 
 **Lineage:** Resilience engineering. For a daily planning tool, "no plan" is worse than "partial plan." The system is designed to be useful even with only a calendar and manual task entry.
 
+**Not an argument for:** sequencing tasks by criticality ("do the load-bearing thing first"). Criticality ordering is a priority-tier decision (see `docs/triage-framework.md`); graceful degradation is specifically about producing partial value when *components fail*, not about which task to do first when all components are working.
+
 ## Neurodivergent Design Rationale
 
 The methodology specifically addresses executive function challenges:
