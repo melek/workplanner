@@ -34,6 +34,7 @@ The `wpl` wrapper lives at `~/.workplanner/bin/wpl` and forwards to `bin/transit
 | `switch` | `<target> [--no-pause]` | Switch focus to a different task |
 | `dispatch` | `<target>` | Mark a task as dispatched to another session |
 | `remove` | `<target> [--as "<title>"]` | Remove a task entirely |
+| `rename` | `<target> <new-title...> [--as "<old-title>"]` | Update a task's title; preserves the original in `original_title` on first rename |
 | `status` | — | Print one-line status summary and full compact task list |
 
 ### Global flags
@@ -189,6 +190,15 @@ A `PostToolUse` plugin hook (`bin/post-tool-use-hook.sh`) provides a secondary f
 - **Auto-pauses** the previous `in_progress` task (sets it back to `pending`)
 - Use `--no-pause` to keep the previous task `in_progress` (for parallel/dispatched work)
 - Switching to a dispatched task (without `--no-pause`) **reclaims** it — clears the `dispatched` flag
+
+### rename
+
+- Updates the target task's `title` to the new value
+- On the **first** rename, copies the prior title into `original_title`; repeat renames update `title` only and leave `original_title` untouched (preserves the planning-phase framing for retrospection)
+- No-ops if the new title matches the current title (case-insensitive, whitespace-tolerant)
+- `--as "<old-title>"` echo-checks against the *current* title — useful when an LLM is renaming to confirm it's pointing at the task it thinks it is
+- Surfaces in the EOD handoff as `(was: <original_title>)` next to the deferred line when the two differ — no separate prompt; drift becomes visible in the artifact
+- Use this when execution reshapes a task and the title-as-typed reads as fiction; the goal is that a week-later reader sees the as-shipped framing without losing the plan trace
 
 ### dispatch
 

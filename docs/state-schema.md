@@ -75,7 +75,8 @@ Tasks do NOT have an `id` field in JSON. Display IDs (`t1`, `t2`, ...) are deriv
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `title` | `string` | yes | Short description of the task. |
+| `title` | `string` | yes | Short description of the task. May be revised via `wpl rename` to reflect work-as-completed; the original is preserved in `original_title` on first rename. |
+| `original_title` | `string` | no | First-renamed title. Set automatically by `wpl rename` on the first rename only — repeat renames update `title` only, leaving `original_title` as the planning-phase receipt. Surfaced by `bin/handoff.py` as `(was: <original_title>)` in the deferred-with-reasons section when it differs from the current `title`. Absent on tasks that were never renamed — migration-safe. |
 | `status` | `string` | yes | Current task state: `pending`, `in_progress`, `done`, `blocked`, `deferred`. |
 | `estimate_min` | `integer` | yes | Estimated duration in minutes. |
 | `actual_min` | `integer \| null` | no | Actual duration in minutes. Set when task reaches `done`. |

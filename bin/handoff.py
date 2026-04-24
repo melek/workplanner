@@ -219,18 +219,27 @@ def read_handoff(target_date=None):
             out["sections"][name][sid] = body.rstrip() + "\n"
 
     # Best-effort extraction of deferred items. Pattern per-line:
-    #   - **<title>** (<uid>): <reason>
+    #   - **<title>** [(was: <orig>)] [(<uid>)]: <reason>
     # Everything else is returned as raw text under sections → skills can
     # still display it as-is if the line doesn't match.
     deferred_section = out["sections"].get("Deferred with reasons", {})
-    line_re = re.compile(r"^\s*-\s+\*\*(?P<title>[^*]+)\*\*\s*(?:\(([^)]+)\))?\s*:\s*(?P<reason>.+?)\s*$")
+    # `(was: ...)` allows parens inside via lazy-match + lookahead for the next
+    # delimiter (uid paren or trailing colon). uid paren stays strict (no
+    # nested parens in uids).
+    line_re = re.compile(
+        r"^\s*-\s+\*\*(?P<title>[^*]+)\*\*"
+        r"(?:\s*\(was:\s*(?P<orig>.+?)\)(?=\s*(?:\(|:\s)))?"
+        r"\s*(?:\((?P<uid>[^)]+)\))?"
+        r"\s*:\s*(?P<reason>.+?)\s*$"
+    )
     for sid, body in deferred_section.items():
         for line in body.splitlines():
             m = line_re.match(line)
             if m:
                 out["deferred"].append({
                     "title": m.group("title").strip(),
-                    "uid": (m.group(2) or "").strip(),
+                    "uid": (m.group("uid") or "").strip(),
+                    "original_title": (m.group("orig") or "").strip(),
                     "reason": m.group("reason").strip(),
                     "session": sid,
                 })
@@ -249,7 +258,13 @@ def _render_session_sub(session_id_str, body):
 
 
 def _render_deferred_body(deferred_items):
-    """Turn a list of {title, uid, reason} dicts into the canonical markdown form.
+    """Turn a list of {title, uid, reason[, original_title]} dicts into
+    canonical markdown.
+
+    When `original_title` is present and differs from `title`, the rendered
+    line carries `(was: <original_title>)` so the plan→actual trace is visible
+    in the handoff without rerunning archives. Caller is responsible for
+    populating `original_title` from the task when building the dict.
 
     The parser in read_handoff() pairs with this format — keep them in sync.
     """
@@ -260,8 +275,10 @@ def _render_deferred_body(deferred_items):
         title = (item.get("title") or "").strip() or "(untitled)"
         uid = (item.get("uid") or "").strip()
         reason = (item.get("reason") or "").strip() or "(no reason given)"
+        orig = (item.get("original_title") or "").strip()
         uid_tag = f" ({uid})" if uid else ""
-        lines.append(f"- **{title}**{uid_tag}: {reason}")
+        was_tag = f" (was: {orig})" if orig and orig != title else ""
+        lines.append(f"- **{title}**{was_tag}{uid_tag}: {reason}")
     return "\n".join(lines)
 
 
