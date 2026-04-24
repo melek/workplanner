@@ -1644,6 +1644,46 @@ def cmd_remove(args):
                   config=load_config(), human_line=line)
 
 
+def cmd_rename(args):
+    """Rename a task. Preserves the very first title in `original_title`
+    so the planning framing survives even when the as-shipped title diverges.
+    Repeat renames update `title` only; `original_title` is set once.
+    """
+    session = load_session()
+    target, task = parse_task_target(args.target, session)
+
+    new_title = " ".join(args.title).strip()
+    if not new_title:
+        fail("New title is required.")
+
+    old_title = task.get("title", "")
+    if _title_matches(old_title, new_title):
+        fail(f"{tid(target)} title is already \"{old_title}\".")
+
+    echoed = getattr(args, "as_title", None)
+    if echoed is not None and not _title_matches(old_title, echoed):
+        emit_error(
+            f"--as echoed title does not match target task. "
+            f"Expected \"{old_title}\" (uid {task.get('uid')}), got \"{echoed}\".",
+            expected_title=old_title,
+            expected_uid=task.get("uid"),
+            echoed=echoed,
+            tid=tid(target),
+        )
+
+    if "original_title" not in task:
+        task["original_title"] = old_title
+    task["title"] = new_title
+
+    save_session(session)
+    render()
+
+    line = (f"\u270e {tid(target)} renamed: \"{old_title}\" \u2192 \"{new_title}\". "
+            f"[{remaining_summary(session)}]")
+    emit_mutation("rename", session, affected=[(target, task)],
+                  config=load_config(), human_line=line)
+
+
 def cmd_dispatch(args):
     """Mark a task as dispatched (being worked on in another session)."""
     session = load_session()
@@ -2790,6 +2830,22 @@ def build_parser():
              "(case-insensitive, whitespace-tolerant).",
     )
 
+    p_rename = sub.add_parser(
+        "rename",
+        help="Rename a task. Preserves the original title on first rename.",
+    )
+    p_rename.add_argument("target", help="Task ID (t3) or 0-based index (2).")
+    p_rename.add_argument("title", nargs="+", help="New task title.")
+    p_rename.add_argument(
+        "--as",
+        dest="as_title",
+        type=str,
+        default=None,
+        help="Echo the target task's CURRENT title. If provided, the CLI refuses "
+             "the mutation unless the echoed title matches "
+             "(case-insensitive, whitespace-tolerant).",
+    )
+
     p_move = sub.add_parser("move", help="Reorder a task.")
     p_move.add_argument("source", help="Task to move (t3 or 0-based index).")
     p_move.add_argument("--to", type=str, required=True, help="Destination: t2, top, end, or index.")
@@ -2925,6 +2981,7 @@ DISPATCH = {
     "defer": cmd_defer,
     "add": cmd_add,
     "remove": cmd_remove,
+    "rename": cmd_rename,
     "move": cmd_move,
     "switch": cmd_switch,
     "dispatch": cmd_dispatch,
