@@ -100,7 +100,7 @@ Opened automatically during morning assembly. Uses `fswatch` for live updates (p
 Three-layer separation:
 
 - **Engine** (`bin/`) — CLI and state management. Methodology-agnostic. Atomic JSON writes.
-- **Methodology** (`docs/methodology.md`) — Productivity philosophy. Seven principles. Customizable via config; deviations tracked in the decision log.
+- **Methodology** (`docs/methodology.md`) — Productivity philosophy. Nine principles, including the EA-practice anchors **Brief Before Gate (completed staff work)** and **No Surprises** that govern the principal/staff contract structurally enforced by the CLI. Customizable via config; deviations tracked in the decision log.
 - **Integrations** (inbox runbooks in `docs/`) — Config-driven data source procedures. No hardcoded MCP servers.
 
 State lives in `~/.workplanner/profiles/<name>/`. The session JSON is the single source of truth — dashboard and agenda are derived views.

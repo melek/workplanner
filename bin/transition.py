@@ -443,6 +443,12 @@ DECISION_LOG = WPL_ROOT / "decision-log.json"
 RENDER = Path(__file__).resolve().parent / "render_dashboard.py"
 MAX_UNDO = 20
 
+# One-time-per-profile marker for the briefing-precondition migration.
+# Existed-pre-schema tasks are auto-briefed on first invocation after upgrade
+# so an in-flight session keeps working; the marker file's presence
+# short-circuits the migration on every subsequent invocation. See issue #44.
+MIGRATION_MARKER_BRIEFING = ".briefing-precondition-migrated"
+
 
 # ── Utilities ────────────────────────────────────────────────────────
 
@@ -459,6 +465,42 @@ def backfill_uids(session):
         if "uid" not in task:
             task["uid"] = generate_uid()
             changed = True
+    return changed
+
+
+def migrate_briefing_field(session):
+    """One-time backfill: tasks predating `briefed_at` get a synthetic timestamp.
+
+    Issue #44 introduces a structural brief-then-gate precondition: advance
+    mutations (`done`/`blocked`/`defer`/`reckon`) refuse on tasks lacking
+    `briefed_at`. To avoid locking up in-flight sessions on first run after
+    upgrade, this function backfills `briefed_at` and `brief_rationale` for
+    every task in the active session that doesn't already have it.
+
+    Idempotent via a per-profile marker file at
+    `$PROFILE_ROOT/.briefing-precondition-migrated`. The marker is written
+    even on no-op runs so subsequent invocations short-circuit cheaply.
+    Returns True if the session object was modified (caller saves).
+    """
+    paths = resolve_paths()
+    marker = paths.PROFILE_ROOT / MIGRATION_MARKER_BRIEFING
+    if marker.exists():
+        return False
+    changed = False
+    now_iso = datetime.now().isoformat()
+    for task in session.get("tasks", []):
+        if "briefed_at" not in task:
+            task["briefed_at"] = now_iso
+            task["brief_rationale"] = "auto-migrated: predates briefing precondition"
+            changed = True
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(now_iso + "\n")
+    except OSError:
+        # Non-fatal: if the marker can't be written, the migration will run
+        # again next invocation. It's a no-op when all tasks already have
+        # `briefed_at`, so the only cost is one extra dict iteration.
+        pass
     return changed
 
 
@@ -686,6 +728,8 @@ def load_session():
         fail(f"Session JSON parse error: {e}")
     if backfill_uids(session):
         save_session(session, undo=False)
+    if migrate_briefing_field(session):
+        save_session(session, undo=False)
     # Stale-session warning. Fires once per process; the command still
     # runs (graceful degradation). Emitted to stderr regardless of
     # output format — stderr is a separate channel, so JSON consumers
@@ -767,6 +811,40 @@ def fail(msg, **extra):
     # kwargs (e.g. next_action=...) are attached to the JSON error object;
     # they're ignored in text mode so the human-facing line stays clean.
     emit_error(msg, **extra)
+
+
+def require_briefed(task, idx, action):
+    """Refuse to advance an unbriefed task.
+
+    Implements the **Brief Before Gate** methodology principle (issue #44):
+    every state advance past `pending` (`done`/`blocked`/`defer`/`reckon`
+    keep|break|delegate) must be preceded by a principal-acknowledged brief
+    (`wpl brief`) or by pre-plan's auto-apply lane (which records its own
+    rationale via `wpl brief --rationale`). Pre-existing sessions are
+    auto-migrated by `migrate_briefing_field()` so the upgrade is invisible.
+
+    Hard refusal (exit 1, stderr) — graceful degradation here would defeat
+    the purpose. The error message names the self-correction commands so
+    an LLM hitting the gate can fix the state in one step.
+    """
+    if not task.get("briefed_at"):
+        # Self-correction goes in the text message AND the JSON payload —
+        # text-mode users (cold-session LLMs hitting the gate by accident,
+        # humans who skipped pickup) need the remediation visible without
+        # parsing JSON.
+        self_correct = (
+            f"Run `/workplanner:pickup {tid(idx)}` to walk through the brief, "
+            f"or `wpl brief {tid(idx)}` to record acknowledgment inline."
+        )
+        fail(
+            f"{tid(idx)} has not been briefed. Cannot {action} an unbriefed task. "
+            f"{self_correct}",
+            tid=tid(idx),
+            uid=task.get("uid"),
+            title=task.get("title"),
+            action=action,
+            self_correct=self_correct,
+        )
 
 
 def now_hhmm():
@@ -1062,6 +1140,7 @@ def _task_record(idx, task):
         "notes": task.get("notes"),
         "started_at": task.get("started_at"),
         "finished_at": task.get("finished_at"),
+        "briefed_at": task.get("briefed_at"),
         "dispatched": bool(task.get("dispatched")),
         "deferral_count": task.get("deferral_count", 0),
         "parent": task.get("parent"),
@@ -1069,6 +1148,12 @@ def _task_record(idx, task):
     defer_reason = task.get("defer_reason")
     if defer_reason:
         record["defer_reason"] = defer_reason
+    brief_rationale = task.get("brief_rationale")
+    if brief_rationale:
+        record["brief_rationale"] = brief_rationale
+    briefing_path = task.get("briefing_path")
+    if briefing_path:
+        record["briefing_path"] = briefing_path
     return record
 
 
@@ -1129,7 +1214,17 @@ def format_task_list(session, config=None):
         parent = t.get("parent")
         parent_str = f" (child of {tid(parent)})" if parent is not None else ""
 
-        line = f"  [{glyph}] {tid(i)}  {uid}  {title}  {time_str}{dispatch_str}{parent_str}{src_str}".rstrip()
+        # Brief Before Gate (issue #44): a pending or in-progress task that
+        # hasn't been briefed gets a loud marker in the listing so the LLM
+        # has a structural cue to invoke `/pickup` before attempting an
+        # advance mutation. Hidden once briefed, and never shown for
+        # done/blocked/deferred tasks (those are already past the gate).
+        is_active_unbriefed = (
+            status in ("pending", "in_progress") and not t.get("briefed_at")
+        )
+        briefing_marker = " ⚠ unbriefed" if is_active_unbriefed else ""
+
+        line = f"  [{glyph}] {tid(i)}  {uid}  {title}  {time_str}{briefing_marker}{dispatch_str}{parent_str}{src_str}".rstrip()
         lines.append(line)
 
     done_count = sum(1 for t in tasks if t.get("status") == "done")
@@ -1285,6 +1380,9 @@ def cmd_done(args):
     if task["status"] != "in_progress":
         fail(f"{tid(idx)} is {task['status']}, not in_progress.")
 
+    # Brief Before Gate: refuse if the task hasn't been briefed.
+    require_briefed(task, idx, action="mark done")
+
     # Echo-check: --as "<title>" must match the target task's title.
     echoed = getattr(args, "as_title", None)
     if echoed is not None and not _title_matches(task.get("title"), echoed):
@@ -1326,6 +1424,9 @@ def cmd_blocked(args):
     if task["status"] != "in_progress":
         fail(f"{tid(idx)} is {task['status']}, not in_progress.")
 
+    # Brief Before Gate: refuse if the task hasn't been briefed.
+    require_briefed(task, idx, action="mark blocked")
+
     task["status"] = "blocked"
     reason = " ".join(args.reason) if args.reason else None
     if reason:
@@ -1353,6 +1454,11 @@ def cmd_defer(args):
         fail("No current task.")
     if task["status"] not in ("in_progress", "pending"):
         fail(f"{tid(idx)} is {task['status']}, can't defer.")
+
+    # Brief Before Gate: refuse if the task hasn't been briefed. Defer is an
+    # advance — the principal needs the briefing context to decide whether
+    # deferral is the right call.
+    require_briefed(task, idx, action="defer")
 
     reason = getattr(args, "reason", None)
     prior_reason = task.get("defer_reason")
@@ -1474,6 +1580,12 @@ def cmd_add(args):
         new_task["started_at"] = started
         new_task["finished_at"] = finished
         new_task["actual_min"] = hhmm_diff(started, finished)
+        # Brief Before Gate (issue #44): a task added as already-done is
+        # the principal logging completed work. The act of adding with
+        # --done is itself an acknowledgment, so the briefing precondition
+        # is satisfied at creation time.
+        new_task["briefed_at"] = datetime.now().isoformat()
+        new_task["brief_rationale"] = "added as already-completed (--done)"
 
     # Determine insertion position
     if args.at is not None:
@@ -1681,6 +1793,54 @@ def cmd_rename(args):
     line = (f"\u270e {tid(target)} renamed: \"{old_title}\" \u2192 \"{new_title}\". "
             f"[{remaining_summary(session)}]")
     emit_mutation("rename", session, affected=[(target, task)],
+                  config=load_config(), human_line=line)
+
+
+def cmd_brief(args):
+    """Record principal acknowledgment of a task briefing (issue #44).
+
+    Sets `briefed_at` to the current timestamp; optionally `brief_rationale`
+    (used by `/pre-plan` auto-apply lane and inline-briefing flows) and
+    `briefing_path` (pointer to a `briefings/{date}/...md` artifact when one
+    exists). Required before `done`/`blocked`/`defer`/`reckon` advance
+    mutations will succeed — the structural reflection of the **completed
+    staff work** methodology principle.
+
+    Idempotent: re-briefing an already-briefed task updates the timestamp
+    and rationale, with the prior state preserved in the undo log via
+    `save_session(undo=True)`. The artifact-path validation is a warning,
+    not a refusal — the principal might be acknowledging from memory or
+    from a briefing that lives outside the standard `briefings/` tree.
+    """
+    session = load_session()
+    target, task = parse_task_target(args.target, session)
+
+    rationale = getattr(args, "rationale", None)
+    artifact_path = getattr(args, "artifact_path", None)
+
+    if artifact_path and not Path(artifact_path).exists():
+        # Warn but don't refuse — graceful degradation.
+        print(
+            f"warning: briefing artifact path does not exist: {artifact_path}",
+            file=sys.stderr,
+        )
+
+    was_briefed = bool(task.get("briefed_at"))
+    task["briefed_at"] = datetime.now().isoformat()
+    if rationale:
+        task["brief_rationale"] = rationale
+    if artifact_path:
+        task["briefing_path"] = str(artifact_path)
+
+    save_session(session)
+    render()
+
+    verb = "re-briefed" if was_briefed else "briefed"
+    line = f"✓ {tid(target)} {verb}"
+    if rationale:
+        line += f" — {rationale}"
+    line += f". [{remaining_summary(session)}]"
+    emit_mutation("brief", session, affected=[(target, task)],
                   config=load_config(), human_line=line)
 
 
@@ -2117,7 +2277,9 @@ def cmd_reckon(args):
 
     choice = args.choice.lower()
     if choice in ("k", "keep"):
-        # Force defer despite threshold
+        # Force defer despite threshold. Brief Before Gate: keep is an
+        # advance, so it requires a briefing just like cmd_defer.
+        require_briefed(task, idx, action="keep deferring")
         was_current = (idx == session.get("current_task_index"))
         task["status"] = "deferred"
         if was_current:
@@ -2157,7 +2319,9 @@ def cmd_reckon(args):
         _move_task_to_backlog(session, idx, target_date=target_date.isoformat())
 
     elif choice in ("b", "break"):
-        # Just defer — the skill will handle the decomposition interactively
+        # Just defer — the skill will handle the decomposition interactively.
+        # Brief Before Gate: break-down is an advance, so it requires a brief.
+        require_briefed(task, idx, action="break down")
         was_current = (idx == session.get("current_task_index"))
         task["status"] = "deferred"
         if was_current:
@@ -2170,6 +2334,9 @@ def cmd_reckon(args):
                       config=load_config(), human_line=human)
 
     elif choice in ("d", "delegate"):
+        # Brief Before Gate: delegation is an advance — the principal needs
+        # the brief to decide who to hand off to and what context to attach.
+        require_briefed(task, idx, action="delegate")
         was_current = (idx == session.get("current_task_index"))
         task["status"] = "deferred"
         if was_current:
@@ -2854,6 +3021,31 @@ def build_parser():
     p_switch.add_argument("target", help="Task ID (t3) or 0-based index (2).")
     p_switch.add_argument("--no-pause", action="store_true", help="Keep previous task in_progress (for parallel work).")
 
+    p_brief = sub.add_parser(
+        "brief",
+        help="Record principal acknowledgment of a task briefing. "
+             "Required before done/blocked/defer/reckon (issue #44).",
+    )
+    p_brief.add_argument("target", help="Task ID (t3), 0-based index, or uid.")
+    p_brief.add_argument(
+        "--rationale",
+        type=str,
+        default=None,
+        help="Optional rationale recorded with the brief. Used by "
+             "/pre-plan auto-apply ('Linear issue already Closed at ...') "
+             "and by inline briefings where the artifact lives in "
+             "conversation rather than on disk.",
+    )
+    p_brief.add_argument(
+        "--artifact-path",
+        dest="artifact_path",
+        type=str,
+        default=None,
+        help="Optional path to a briefing markdown file (e.g. "
+             "$PROFILE_ROOT/briefings/{date}/...md). Validated for existence "
+             "with a stderr warning; not required.",
+    )
+
     p_dispatch = sub.add_parser("dispatch", help="Mark a task as dispatched to another session.")
     p_dispatch.add_argument("target", help="Task ID (t3) or 0-based index (2).")
 
@@ -2980,6 +3172,7 @@ DISPATCH = {
     "blocked": cmd_blocked,
     "defer": cmd_defer,
     "add": cmd_add,
+    "brief": cmd_brief,
     "remove": cmd_remove,
     "rename": cmd_rename,
     "move": cmd_move,

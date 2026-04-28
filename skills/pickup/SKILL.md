@@ -12,6 +12,8 @@ Pick up an workplanner task in this Claude session. Collects task context and st
 **Plugin root:** `${CLAUDE_PLUGIN_ROOT}`
 **Transition CLI:** `${CLAUDE_PLUGIN_ROOT}/bin/transition.py`
 
+**Principles applied (see `docs/methodology.md`):** Step 6 implements **Brief Before Gate (completed staff work)** — the briefing is presented and the principal's yes/no is the gate. Step 7 implements the **No Surprises** rule — the acknowledgment is recorded via `wpl brief` so subsequent advance commands carry the principal's authorization on record. Skipping Step 7 means `wpl done` / `wpl blocked` / `wpl defer` will refuse with an error; that's intentional.
+
 ## Profile resolution
 
 Resolve `PROFILE_ROOT` once and reuse. Do not hardcode `~/.workplanner/profiles/active/…`.
@@ -101,7 +103,23 @@ Present a summary:
 <proposed steps — from briefing's Draft Plan if available, refined with any fresh context>
 ```
 
-Then ask: "Ready to start, or want to adjust the approach?"
+Then ask: "Ready to start, or want to adjust the approach?" **On go-ahead, proceed to Step 7.**
+
+### Step 7: Record acknowledgment
+
+Once the principal gives the go-ahead ("ready", "go", "yes", or "go but with X" once the X has been incorporated), record the briefing acknowledgment so subsequent advance mutations will succeed:
+
+```bash
+# When a briefing artifact file exists (e.g. from /workplanner:pre-plan):
+wpl brief <task-id> --artifact-path "$PROFILE_ROOT/briefings/{date}/{filename}"
+
+# Otherwise (live-context-only pickup, no on-disk briefing):
+wpl brief <task-id>
+```
+
+This is the structural reflection of **Brief Before Gate** (methodology principle 3): without the recorded acknowledgment, `wpl done` / `wpl blocked` / `wpl defer` / `wpl reckon keep|break|delegate` will refuse with an error and self-correction message naming this skill or `wpl brief` directly. The refusal is intentional — if the principal hasn't acknowledged the brief, the staff (CLI) hasn't been authorized to advance.
+
+If the principal redirects ("not now, go work on t5 instead", "actually skip this", "block on Sam"), don't record the brief — pickup ended without authorization, which is itself a valid outcome. Re-pickup later when the conditions are right.
 
 ## Notes
 
