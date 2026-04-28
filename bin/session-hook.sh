@@ -96,7 +96,7 @@ lines.append('  Use wpl to manage tasks (e.g., wpl done, wpl status) — add ~/.
 plugin_root = '$CLAUDE_PLUGIN_ROOT'
 methodology_path = plugin_root.rstrip('/') + '/docs/methodology.md' if plugin_root else 'docs/methodology.md (in the workplanner plugin)'
 lines.append('')
-lines.append(f'Operating under the workplanner EA/PA methodology. For work-shape questions (prioritization, triage, carryover, deferral, budget, scoping, rhythm), read {methodology_path} and apply its seven principles by name in your reasoning. Cite at least one principle (e.g. \"timebox, don\\'t estimate\", \"carryover earns its place\", \"force the reckoning\", \"graceful degradation\") when making a recommendation; if you deviate from a principle, name it and say why. Generic PM vocabulary (\"critical path\", \"budget\", \"risk\") without principle-mapping means the framework is being read but not applied — the failure mode this directive exists to prevent.')
+lines.append(f'Operating under the workplanner EA/PA methodology. For work-shape questions (prioritization, triage, carryover, deferral, budget, scoping, rhythm), read {methodology_path} and apply its nine principles by name in your reasoning. Cite at least one principle (e.g. \"brief before gate\" / \"completed staff work\", \"no surprises\", \"timebox, don\\'t estimate\", \"carryover earns its place\", \"force the reckoning\", \"graceful degradation\") when making a recommendation; if you deviate from a principle, name it and say why. Generic PM vocabulary (\"critical path\", \"budget\", \"risk\") without principle-mapping means the framework is being read but not applied — the failure mode this directive exists to prevent.')
 
 print('\n'.join(lines))
 " 2>/dev/null

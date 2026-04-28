@@ -164,12 +164,19 @@ def test_methodology_pointer_in_session_hook():
                      "session-hook: methodology.md pointer")
     _assert_contains(text, "work-shape questions",
                      "session-hook: work-shape trigger phrase")
-    _assert_contains(text, "apply its seven principles by name",
-                     "session-hook: apply-not-just-consult directive")
+    _assert_contains(text, "apply its nine principles by name",
+                     "session-hook: apply-not-just-consult directive (post issue #44, principle count is 9)")
     _assert_contains(text, "Cite at least one principle",
                      "session-hook: cite-principle instruction")
     _assert_contains(text, "if you deviate from a principle, name it",
                      "session-hook: deviation-must-be-named rule")
+    # Issue #44: the two new EA-practice principles must appear in the
+    # citation-examples list so cold sessions know they're first-class
+    # vocabulary alongside the original seven.
+    _assert_contains(text, "completed staff work",
+                     "session-hook: 'completed staff work' (Brief Before Gate) in citation examples")
+    _assert_contains(text, "no surprises",
+                     "session-hook: 'no surprises' rule in citation examples")
 
 
 def main():

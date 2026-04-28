@@ -60,6 +60,9 @@ def _init_session(cwd, env, date_str):
     root = Path(root.strip())
     session_path = root / "session" / "current-session.json"
     session_path.parent.mkdir(parents=True, exist_ok=True)
+    # Tasks with status "in_progress" carry briefed_at to satisfy the
+    # brief-then-gate precondition (issue #44). Pretending the task was
+    # already picked up via /pickup mirrors real-world fixture setup.
     session_path.write_text(json.dumps({
         "date": date_str,
         "week": "W16",
@@ -68,7 +71,9 @@ def _init_session(cwd, env, date_str):
         "current_task_index": 0,
         "tasks": [
             {"uid": "task0001", "title": "First task", "status": "in_progress",
-             "estimate_min": 30, "source": "manual", "started_at": "09:00"},
+             "estimate_min": 30, "source": "manual", "started_at": "09:00",
+             "briefed_at": "2026-04-27T09:00:00",
+             "brief_rationale": "test fixture"},
             {"uid": "task0002", "title": "Second task", "status": "pending",
              "estimate_min": 15, "source": "manual"},
         ],
@@ -128,7 +133,8 @@ def main():
             "eod_target": "18:00", "current_task_index": 0,
             "tasks": [
                 {"uid": "task00a1", "title": "PA-task", "status": "in_progress",
-                 "estimate_min": 30, "source": "manual", "started_at": "09:00"},
+                 "estimate_min": 30, "source": "manual", "started_at": "09:00",
+                 "briefed_at": "2026-04-27T09:00:00", "brief_rationale": "test fixture"},
             ],
         }) + "\n")
         session_b.write_text(json.dumps({
@@ -136,7 +142,8 @@ def main():
             "eod_target": "18:00", "current_task_index": 0,
             "tasks": [
                 {"uid": "task00b1", "title": "PB-task", "status": "in_progress",
-                 "estimate_min": 30, "source": "manual", "started_at": "09:00"},
+                 "estimate_min": 30, "source": "manual", "started_at": "09:00",
+                 "briefed_at": "2026-04-27T09:00:00", "brief_rationale": "test fixture"},
             ],
         }) + "\n")
         # Snapshot pa's dashboard modification time so we can detect no-touch.
@@ -214,7 +221,8 @@ def main():
             "eod_target": "18:00", "current_task_index": 0,
             "tasks": [
                 {"uid": "taskV5", "title": "V5-task", "status": "in_progress",
-                 "estimate_min": 30, "source": "manual", "started_at": "09:00"},
+                 "estimate_min": 30, "source": "manual", "started_at": "09:00",
+                 "briefed_at": "2026-04-27T09:00:00", "brief_rationale": "test fixture"},
             ],
         }) + "\n")
         _, out, _ = _run(ws_a, env, "--format", "json", "defer",
@@ -238,7 +246,8 @@ def main():
             "tasks": [
                 {"uid": "taskV6", "title": "V6-task", "status": "in_progress",
                  "estimate_min": 30, "source": "manual", "started_at": "09:00",
-                 "deferral_count": 2, "defer_reason": "prior reason"},
+                 "deferral_count": 2, "defer_reason": "prior reason",
+                 "briefed_at": "2026-04-27T09:00:00", "brief_rationale": "test fixture"},
             ],
         }) + "\n")
         rc, out, err = _run(ws_a, env, "--format", "json", "defer",

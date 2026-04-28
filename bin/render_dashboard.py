@@ -522,6 +522,20 @@ def _find_block_insert_position(tasks, block_start_min):
 # ── Task rendering ───────────────────────────────────────────────────
 
 
+def _unbriefed_tag(task):
+    """Render the `⚠ unbriefed` marker for tasks that haven't been briefed.
+
+    Empty for briefed tasks (`briefed_at` set) and for tasks past the gate
+    (status in done/blocked/deferred — those already advanced, so the marker
+    would be noise). See workplanner issue #44 — Brief Before Gate.
+    """
+    if task.get("briefed_at"):
+        return ""
+    if task.get("status") not in ("pending", "in_progress"):
+        return ""
+    return f"  {YELLOW}⚠ unbriefed{RESET}"
+
+
 def _task_right(t, idle_periods=None):
     """Right-side status/timing string for a task line."""
     status = t.get("status", "pending")
@@ -562,7 +576,8 @@ def _render_children(lines, children, idle_periods=None):
         c_title = child["title"]
         ref_tag = f" [{child.get('ref')}]" if child.get("ref") else ""
         c_right = _task_right(child, idle_periods)
-        lines.append(f" {connector} {c_icon}  {child['id']:<5}{c_title}{ref_tag}{c_right}")
+        c_unbriefed = _unbriefed_tag(child)
+        lines.append(f" {connector} {c_icon}  {child['id']:<5}{c_title}{ref_tag}{c_unbriefed}{c_right}")
 
 
 # ── Main render ──────────────────────────────────────────────────────
@@ -654,14 +669,16 @@ def render(session, config=None, idle_periods=None):
             else:
                 icon = STATUS_ICON["pending"]
             ref_tag = f" [{t.get('ref')}]" if t.get("ref") else ""
-            lines.append(f" {icon}  {tid:<4} {t['title']}{ref_tag}")
+            unbriefed_tag = _unbriefed_tag(t)
+            lines.append(f" {icon}  {tid:<4} {t['title']}{ref_tag}{unbriefed_tag}")
             _render_children(lines, children, idle_periods)
         else:
             icon = STATUS_ICON.get(_status_key(t), "?")
             ref_tag = f" [{t.get('ref')}]" if t.get("ref") else ""
             title = t["title"] + ref_tag
             right = _task_right(t, idle_periods)
-            lines.append(f" {icon}  {tid:<4} {title}  {right}")
+            unbriefed_tag = _unbriefed_tag(t)
+            lines.append(f" {icon}  {tid:<4} {title}{unbriefed_tag}  {right}")
 
     # Check if a block goes after all tasks
     for pos, block in block_inserts.items():

@@ -12,6 +12,8 @@ Generate task briefings ahead of time and surface strategic workplan revisions. 
 **Plugin root:** `${CLAUDE_PLUGIN_ROOT}`
 **Transition CLI:** `${CLAUDE_PLUGIN_ROOT}/bin/transition.py`
 
+**Principles applied (see `docs/methodology.md`):** This skill implements **Brief Before Gate (completed staff work)** by producing read-only research artifacts that decision-ready briefings hand to the principal at pickup time. Step 8's auto-apply lane is the one structural bypass of the brief-then-gate precondition — it records its own rationale via `wpl brief --rationale` (so the **No Surprises** invariant holds: every advance past `pending` was preceded by either a principal-acknowledged brief or an evidence-backed auto-apply on the record). Per-task agent failures don't block the batch — see **Graceful Degradation Everywhere**.
+
 ## Profile resolution
 
 Resolve the concrete profile root **once** at the top of this skill and reuse as `PROFILE_ROOT`. Do not hardcode `~/.workplanner/profiles/active/…` — the `active` symlink is no longer the source of truth.
@@ -210,15 +212,15 @@ If there are no signals at all, skip to Step 9.
 
 #### Auto-apply (high confidence, reversible, evidence-backed)
 
-Apply these immediately via `transition.py`, logging each action as you go:
+Apply these immediately via `transition.py`, logging each action as you go. Note the `brief --rationale` step inserted before any advance — this is the one structural bypass of the **Brief Before Gate** precondition (issue #44). The rationale carries the evidence (Linear status, PR URL, person + timestamp) and lands in the undo log alongside the advance, so reviewing the session shows the chain "brief-with-evidence → advance" for every auto-applied transition.
 
 | Signal | Condition to auto-apply | Action |
 |--------|------------------------|--------|
-| DONE | Issue status is "Done"/"Closed" in Linear, or PR merged, or comment already posted — agent cited specific evidence | `switch {index} && done` |
-| DONE_BY_OTHER | Agent found a specific person + timestamp + artifact | `switch {index} && done` (note who in briefing) |
-| BLOCKED | Agent identified a concrete unmet dependency (missing access, waiting on deploy, etc.) | `switch {index} && blocked "{reason}"` |
-| ESTIMATE | Research reveals clear scope mismatch (e.g., "3 docs not 1", "API has 12 endpoints not 3") | Note revised estimate in briefing's "Estimated Pickup Time" section |
-| REORDER | Task A produces output that task B explicitly needs as input — both tasks are in the session | `move {source} --to {dest}` |
+| DONE | Issue status is "Done"/"Closed" in Linear, or PR merged, or comment already posted — agent cited specific evidence | `switch {index} && brief {index} --rationale "auto-apply: {evidence}" && done` |
+| DONE_BY_OTHER | Agent found a specific person + timestamp + artifact | `switch {index} && brief {index} --rationale "auto-apply: completed by {who} at {when} ({artifact})" && done` |
+| BLOCKED | Agent identified a concrete unmet dependency (missing access, waiting on deploy, etc.) | `switch {index} && brief {index} --rationale "auto-apply: dependency {dep} unmet" && blocked "{reason}"` |
+| ESTIMATE | Research reveals clear scope mismatch (e.g., "3 docs not 1", "API has 12 endpoints not 3") | Note revised estimate in briefing's "Estimated Pickup Time" section (no advance, no brief needed) |
+| REORDER | Task A produces output that task B explicitly needs as input — both tasks are in the session | `move {source} --to {dest}` (organizational, not an advance) |
 
 #### Ask the user (low confidence, irreversible, or preference-dependent)
 

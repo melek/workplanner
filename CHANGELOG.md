@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added
+
+- **`wpl brief` CLI primitive** — record principal acknowledgment of a task briefing (issue #44). Sets `briefed_at` (ISO 8601 timestamp) on the target task; optional `--rationale STRING` and `--artifact-path PATH` are stored as `brief_rationale` and `briefing_path`. Idempotent (re-briefing updates the timestamp; prior state preserved in undo log). Required before any advance mutation — see "Changed" below.
+- **`briefed_at` / `brief_rationale` / `briefing_path` task fields** — first-class state fields documenting the brief-then-gate authorization chain. Surfaced in `wpl status --format json` via `_task_record`. See `docs/state-schema.md`.
+- **`⚠ unbriefed` display marker** — shown in `wpl status` and the dashboard for any pending or in-progress task lacking `briefed_at`. Hidden once briefed; never rendered for done/blocked/deferred tasks.
+- **Methodology principles 3 (Brief Before Gate / Completed Staff Work) and 7 (No Surprises)** — new EA-practice anchors in `docs/methodology.md`, alongside the renumbered existing principles. The two new principles are also added to the citation-examples list in `bin/session-hook.sh` so the SessionStart directive lists all nine.
+- **"Briefing precondition" section in `docs/task-transitions.md`** — explains the precondition, the expected pickup-then-advance flow, the inline-brief escape hatch, the `/pre-plan` auto-apply pattern, and the migration behavior.
+- **Principle-citation blocks** at the top of `skills/pickup/SKILL.md` and `skills/pre-plan/SKILL.md` — anchors the procedural prose to the named methodology principles instead of leaving the connection implicit.
+
+### Changed
+
+- **`wpl done`, `wpl blocked`, `wpl defer`, `wpl reckon keep|break|delegate` now refuse on unbriefed tasks** with exit 1 and a self-correction message naming `/workplanner:pickup` or `wpl brief` as remediation. Issue #44. The structural enforcement of completed staff work — every advance past `pending` was preceded by either a principal-acknowledged brief or an evidence-backed auto-apply. `wpl switch`, `wpl move`, `wpl rename`, `wpl remove`, `wpl reckon drop|timebox`, and the dispatch flow are unaffected — they don't advance state, they organize it.
+- **`/workplanner:pickup` adds Step 7 (Record acknowledgment)** — once the principal gives the go-ahead at the existing Step 6 gate, the skill calls `wpl brief <task-id>` (with `--artifact-path` when a pre-plan briefing file exists) so subsequent advance commands carry the principal's authorization on record.
+- **`/workplanner:pre-plan` Step 8 auto-apply lane** now interposes `wpl brief --rationale "auto-apply: {evidence}"` before any advance mutation. This is the one structural bypass of the brief-then-gate precondition; the rationale carries the evidence (Linear status, PR URL, person + timestamp) and lands in the undo log alongside the advance.
+- **`wpl add --done`** — tasks added as already-completed are auto-briefed at creation time (`brief_rationale: "added as already-completed (--done)"`). The `--done` flag is itself the principal's acknowledgment, so the precondition is satisfied without a separate `wpl brief` call.
+
+### Migration
+
+- **Existing in-flight sessions auto-migrate on first invocation after upgrade.** Every task in the active session that lacks `briefed_at` is backfilled with a synthetic timestamp and `brief_rationale: "auto-migrated: predates briefing precondition"`. The migration is recorded once via marker file `$PROFILE_ROOT/.briefing-precondition-migrated` and is idempotent. Failure to write the marker is non-fatal — the migration retries next invocation as a no-op when all tasks already have the field.
+
+### Deferred to follow-up issue
+
+- **Briefing artifact carryover across days/sessions.** Today briefings live under `briefings/{date}/`; deferred-then-resumed tasks orphan their prior briefing. The artifact unification design (task-UID-keyed paths, lifecycle policy) is scoped to a separate issue rather than expanding this PR.
+
 ## 1.0.0-beta.5
 
 Methodology-reach release — four merged PRs (#34, #36/#37/#38, this) across issues #33, #35, #40, focused on closing the gap between the plugin's engine capabilities and the skill prose that teaches them to the LLM.

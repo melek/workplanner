@@ -127,7 +127,8 @@ def main():
         # ── V1: banner distinguishes "all done" from "no active, pending" ──
         _write_session(profile_a, tasks=[
             {"uid": "v1-1", "title": "T1", "status": "in_progress",
-             "estimate_min": 30, "source": "manual", "started_at": "09:00"},
+             "estimate_min": 30, "source": "manual", "started_at": "09:00",
+             "briefed_at": "2026-04-27T09:00:00", "brief_rationale": "test fixture"},
             {"uid": "v1-2", "title": "T2", "status": "pending",
              "estimate_min": 15, "source": "manual"},
             {"uid": "v1-3", "title": "T3", "status": "pending",
@@ -175,7 +176,8 @@ def main():
         # Restore today's session for subsequent tests.
         _write_session(profile_a, tasks=[
             {"uid": "v3-1", "title": "T1", "status": "in_progress",
-             "estimate_min": 30, "source": "manual", "started_at": "09:00"},
+             "estimate_min": 30, "source": "manual", "started_at": "09:00",
+             "briefed_at": "2026-04-27T09:00:00", "brief_rationale": "test fixture"},
             {"uid": "v3-2", "title": "T2", "status": "pending",
              "estimate_min": 15, "source": "manual"},
         ], current_index=0)
@@ -207,7 +209,8 @@ def main():
         # Restore session.
         _write_session(profile_a, tasks=[
             {"uid": "v5-1", "title": "T1", "status": "in_progress",
-             "estimate_min": 30, "source": "manual", "started_at": "09:00"},
+             "estimate_min": 30, "source": "manual", "started_at": "09:00",
+             "briefed_at": "2026-04-27T09:00:00", "brief_rationale": "test fixture"},
             {"uid": "v5-2", "title": "T2", "status": "pending",
              "estimate_min": 15, "source": "manual"},
             {"uid": "v5-3", "title": "T3", "status": "pending",
@@ -229,7 +232,8 @@ def main():
         # Need an in_progress task; re-init and switch.
         _write_session(profile_a, tasks=[
             {"uid": "v5s-1", "title": "T1", "status": "in_progress",
-             "estimate_min": 30, "source": "manual", "started_at": "09:00"},
+             "estimate_min": 30, "source": "manual", "started_at": "09:00",
+             "briefed_at": "2026-04-27T09:00:00", "brief_rationale": "test fixture"},
         ], current_index=0)
         rc, out, err = _run(ws, env, "blocked", "on", "code", "review",
                             check_exit=0)
@@ -247,7 +251,8 @@ def main():
         from datetime import date as _local_date
         _write_session(profile_b, tasks=[
             {"uid": "v6b-1", "title": "PB-task", "status": "in_progress",
-             "estimate_min": 30, "source": "manual", "started_at": "09:00"},
+             "estimate_min": 30, "source": "manual", "started_at": "09:00",
+             "briefed_at": "2026-04-27T09:00:00", "brief_rationale": "test fixture"},
         ], session_date=_local_date.today().isoformat(), current_index=0)
         # Ensure wpl wrapper exists — ensure_wrapper() runs on every
         # transition.py call, so the prior _run calls created it.
@@ -296,7 +301,8 @@ def main():
         # ── V8: --profile breadcrumb + JSON fields ───────────────────
         _write_session(profile_b, tasks=[
             {"uid": "v8b-1", "title": "PB-task", "status": "in_progress",
-             "estimate_min": 30, "source": "manual", "started_at": "09:00"},
+             "estimate_min": 30, "source": "manual", "started_at": "09:00",
+             "briefed_at": "2026-04-27T09:00:00", "brief_rationale": "test fixture"},
         ], current_index=0)
         rc, out, err = _run(ws, env, "--profile", "pb", "status", check_exit=0)
         first_line = out.splitlines()[0] if out.splitlines() else ""
@@ -333,7 +339,8 @@ def main():
         _clear_tz(profile_a)
         _write_session(profile_a, tasks=[
             {"uid": "v9-1", "title": "T1", "status": "in_progress",
-             "estimate_min": 30, "source": "manual", "started_at": "09:00"},
+             "estimate_min": 30, "source": "manual", "started_at": "09:00",
+             "briefed_at": "2026-04-27T09:00:00", "brief_rationale": "test fixture"},
         ], current_index=0)
         rc, out, err = _run(ws, env, "status", check_exit=0)
         warn_count = err.count("profile has no 'timezone' set")

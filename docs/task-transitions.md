@@ -26,9 +26,10 @@ The `wpl` wrapper lives at `~/.workplanner/bin/wpl` and forwards to `bin/transit
 
 | Command | Args | Effect |
 |---------|------|--------|
-| `done` | `[--as "<title>"]` | Mark **current task** done (no positional target — see "Current-task verbs" below) |
-| `blocked` | `[reason...]` | Mark **current task** blocked; remaining args become the free-text reason |
-| `defer` | `[--until DATE] [--reason ...]` | Defer **current task**; with `--until` sends to backlog with target date |
+| `done` | `[--as "<title>"]` | Mark **current task** done (no positional target — see "Current-task verbs" below). Refuses on unbriefed tasks — see "Briefing precondition" below. |
+| `blocked` | `[reason...]` | Mark **current task** blocked; remaining args become the free-text reason. Refuses on unbriefed tasks. |
+| `defer` | `[--until DATE] [--reason ...]` | Defer **current task**; with `--until` sends to backlog with target date. Refuses on unbriefed tasks. |
+| `brief` | `<target> [--rationale ...] [--artifact-path PATH]` | Record principal acknowledgment of a task briefing (issue #44). Required before any advance mutation; see "Briefing precondition" below. |
 | `add` | `<title> [flags]` | Add a new task (see flags below) |
 | `move` | `<source> --to <dest>` | Reorder a task to a new position |
 | `switch` | `<target> [--no-pause]` | Switch focus to a different task |
@@ -56,6 +57,38 @@ consulted. See `docs/profiles.md` for the full flow and migration notes.
 ### `--as "<title>"` echo check
 
 `done` and `remove` accept an optional `--as "<title>"` argument. When present, the CLI compares the echoed title to the target task's actual title (case-insensitive, whitespace-tolerant). On mismatch, the mutation is refused with an error naming the actual title and UID, and the process exits non-zero. This is a cheap sanity check that catches "wrong-task" mistakes from stale display IDs, and self-documents the LLM's intent in the session transcript. Absent `--as`, behavior is unchanged.
+
+### Briefing precondition
+
+Advance mutations (`done`, `blocked`, `defer`, `reckon keep|break|delegate`) refuse on tasks that have no `briefed_at` recorded. The CLI exits with a non-zero status and a self-correction message naming `/workplanner:pickup` or `wpl brief` as remediation. This is the structural reflection of methodology principle 3 ("Brief Before Gate / Completed Staff Work" — see `docs/methodology.md`): every advance past `pending` was preceded by either a principal-acknowledged brief or an evidence-backed auto-apply.
+
+The expected flow:
+
+```bash
+wpl switch t3                    # OK — switching attention is unrestricted
+wpl done                         # ERROR — t3 has no briefing
+/workplanner:pickup t3           # walks Step 6's gate; on go-ahead, runs `wpl brief t3` for you
+wpl done                         # OK — t3 is now briefed
+```
+
+Inline briefing for self-evident tasks (skip the conversational pickup):
+
+```bash
+wpl brief t3 --rationale "title is self-evident, going straight to it"
+wpl done
+```
+
+Auto-apply (used by `/workplanner:pre-plan` Step 8):
+
+```bash
+wpl switch t3 \
+  && wpl brief t3 --rationale "auto-apply: Linear issue PROJ-12 closed at 2026-04-25" \
+  && wpl done
+```
+
+**Migration:** sessions predating this precondition are auto-briefed on first invocation after upgrade so the schema change is invisible. The migration is recorded once via `$PROFILE_ROOT/.briefing-precondition-migrated`. New tasks (added via `wpl add` without `--done`, or promoted from the backlog) start unbriefed and require a brief before advance.
+
+**Display:** `wpl status` and the dashboard render `⚠ unbriefed` after the title for any pending or in-progress task lacking `briefed_at`. The marker hides once briefed and never shows for done/blocked/deferred tasks.
 
 ### Current-task verbs vs target verbs
 
