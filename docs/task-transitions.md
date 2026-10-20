@@ -120,12 +120,12 @@ Tasks can be nested one level via `--parent`. When the parent rolls up several r
 
 ```bash
 # Parent: the umbrella task
-wpl add "RSM: M1 consolidation" --est 140 --at top
+wpl add "Eval harness: v1 milestone" --est 140 --at top
 
 # Children: each step under the parent (parent is now t1)
-wpl add "Check Paulina's workflow blocker" --est 30 --parent t1
+wpl add "Check the reviewer's workflow blocker" --est 30 --parent t1
 wpl add "Vendor judge prompt + schema" --est 20 --parent t1
-wpl add "Pull HAPAI candidates into v0.jsonl" --est 45 --parent t1
+wpl add "Pull candidates into v0.jsonl" --est 45 --parent t1
 ```
 
 When to use it: project-scoped work with multiple sub-steps, a shared gate, and enough coherence that the parent is a meaningful unit of progress. When to skip it: a normal day's mixed-topic agenda — flat siblings read better than a tree of unrelated items.

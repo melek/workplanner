@@ -141,7 +141,7 @@ Created during first-run setup. Persists across sessions.
 | `integrations.team_activity.member` | `string` | yes (if parent set) | The user's identifier for the activity-aggregation provider — typically the username the provider uses to scope activity (e.g. `"yourusername"`). |
 | `inbox_slack_channels` | `object` | deprecated | Legacy duplicate of `slack_channel_ids`. `load_config()` merges entries into `slack_channel_ids` on read (canonical wins on conflict) and emits a one-time stderr warning. Remove this key when convenient; see [#27](https://github.com/melek/workplanner/issues/27). |
 | `inbox_slack_team_handles` | `array` of `string` | no | Team handles to search for pings. E.g. `["@team-handle", "@team-name"]`. |
-| `inbox_slack_announcement_authors` | `array` of `string` | no | Slack usernames whose announcements to monitor. E.g. `["matt"]`. |
+| `inbox_slack_announcement_authors` | `array` of `string` | no | Slack usernames whose announcements to monitor. E.g. `["ceo-handle"]`. |
 | `inbox_p2s` | `array` of `string` | no | Blog/feed domains to sweep. E.g. `["team-blog.example.com", "project-blog.example.com"]`. |
 | `inbox_github_orgs` | `array` of `string` | no | GitHub orgs to scan for PR reviews. Default: `[]`. |
 | `inbox_gmail_priority_domains` | `array` of `string` | no | Email domains to tag as `gmail-priority` source (higher triage tier). Default: `[]`. |
@@ -251,7 +251,7 @@ Pre-generated task briefings, organized by date. Created by `/pre-plan`, consume
   2026-03-16/
     README.md                           # Index with status of each briefing
     t01-a1b2c3d4-fix-email-bot.md      # Individual task briefing
-    t02-e8a45522-ciab-docs.md
+    t02-e8a45522-api-docs.md
 ```
 
 ### Filename convention
