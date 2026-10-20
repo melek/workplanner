@@ -76,8 +76,10 @@ This is the load-bearing artifact. Write (or update) the session's contribution 
 
 Tomorrow's `/start` Step 0.25 reads this file to carry decisions, defer reasons, and context forward. Multiple sessions (dispatched tmux panes, multiple Claude instances) can each contribute; `handoff.py` merges by section and by session ID so writers never clobber each other.
 
+**Draft from task state, not memory.** Before writing any section, read each task's `notes`, `url`, `ref` and `original_title` from the session JSON (`wpl --format json status`). That detail survives context compaction, resumed sessions and dispatched panes; your recollection of the day does not. Prefer it over restating the title, and include the link when a task has one. Fall back to the title alone only when the task carries nothing more.
+
 **Sections this session writes:**
-- **Session trajectory** — high-level narrative of what got done, deferred, blocked. Not a minute-by-minute log; a readable "here's where the day landed" paragraph or bulleted summary.
+- **Session trajectory** — high-level narrative of what got done, deferred, blocked, built from each task's `notes`/`url` (see above). Not a minute-by-minute log; a readable "here's where the day landed" paragraph or bulleted summary.
 - **Deferred with reasons** — every task that ended the day in `deferred` or `blocked` status, with the `defer_reason` (or blocked reason from `notes`) inline. This is the field tomorrow's mini-triage pivots on.
 - **Open questions** — anything the LLM (you) noticed during the day that needs a human decision, research, or escalation but wasn't captured elsewhere.
 - **Context for tomorrow** — short, concrete pointers. "Check the deploy in #release-room first thing," "the PR #1234 discussion hit a wall — re-read before replying."
@@ -122,7 +124,7 @@ Only if `personal_sub_issue` is set in session state: compile a draft check-in c
 ```markdown
 ### Thursday, March 5 — Daily Update
 **Done:**
-- <task title> — <brief note if any>
+- <task title> — <outcome from the task's `notes`, with its `url` if set>
 **Carrying over:**
 - <task title> — <reason if blocked>
 **Sent to backlog:**

@@ -1,13 +1,25 @@
 ---
 name: dispatch
 description: "Hand off an workplanner task to a Claude Code session in a new tmux pane. Generates a handoff prompt with full task context and launches claude."
-argument-hint: "[task — t3, index, or search term] [extra instructions...]"
+argument-hint: "[task — t3, index, or search term] [--mode plan|default|edits|bypass] [extra instructions...]"
 allowed-tools: Read, Bash, Grep, Glob, ToolSearch, Agent
 ---
 
 # Dispatch
 
-Hand off an workplanner task to a Claude Code session in a new tmux pane. The session starts in normal interactive mode so it plans with the user before acting.
+Hand off an workplanner task to a Claude Code session in a new tmux pane. By default the session starts in plan mode, so it plans with the user before acting; see "Permission mode" below to change that.
+
+## Permission mode
+
+Resolve the child session's `--permission-mode`, first match wins:
+
+1. An explicit `--mode <value>` in the skill arguments.
+2. `dispatch.permission_mode` in `$PROFILE_ROOT/config.json`.
+3. `plan`.
+
+Accepted values: `plan`, `default`, `acceptEdits`, `bypassPermissions`. Also accept the shorthands `edits` → `acceptEdits` and `bypass` → `bypassPermissions`. Reject anything else and name the accepted values.
+
+Do **not** inherit the parent session's mode. How the user supervises this session says nothing about how closely they want to supervise a child running in another pane.
 
 **Plugin root:** `${CLAUDE_PLUGIN_ROOT}`
 **Transition CLI:** `${CLAUDE_PLUGIN_ROOT}/bin/transition.py`
@@ -99,10 +111,10 @@ Write launcher to `/tmp/dispatch-t{index+1}.sh`. The launcher must export `WPL_P
 #!/bin/bash -l
 cd {working_dir}
 export WPL_PROFILE={PROFILE_NAME}
-claude --permission-mode plan "$(cat $PROFILE_ROOT/handoffs/t{index+1}.md)"
+claude --permission-mode {PERMISSION_MODE} "$(cat $PROFILE_ROOT/handoffs/t{index+1}.md)"
 ```
 
-Interpolate `{PROFILE_NAME}` and `$PROFILE_ROOT` into the launcher text at write-time — the child shell won't have the parent's `$PROFILE_NAME` variable unless you bake it in.
+Interpolate `{PROFILE_NAME}`, `{PERMISSION_MODE}` (resolved above) and `$PROFILE_ROOT` into the launcher text at write-time — the child shell won't have the parent's `$PROFILE_NAME` variable unless you bake it in.
 
 Launch:
 ```bash
@@ -114,7 +126,7 @@ tmux select-pane -T "t{index+1}"
 ### 6. Confirm
 
 ```
-Dispatched t{index+1} "{title}" → tmux pane "t{index+1}"
+Dispatched t{index+1} "{title}" → tmux pane "t{index+1}" (permission mode: {PERMISSION_MODE})
 ```
 
 ## Edge cases

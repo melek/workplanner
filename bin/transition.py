@@ -1056,14 +1056,15 @@ def backlog_count():
 
 
 def remaining_summary(session):
-    """Return string like '~3h left' for remaining estimate."""
+    """Return string like 'Budget: ~3h' — the summed estimate of unfinished
+    tasks. Not wall-clock time; that's the EOD field (issue #50)."""
     tasks = session.get("tasks", [])
     remaining = sum(
         t.get("estimate_min", 0) or 0
         for t in tasks
         if t.get("status") in ("pending", "in_progress", "blocked")
     )
-    return f"~{fmt_duration(remaining)} left"
+    return f"Budget: ~{fmt_duration(remaining)}"
 
 
 def status_line(session, config=None):
@@ -1095,7 +1096,7 @@ def status_line(session, config=None):
             f"\u25b6 {tid(idx)} \u2014 {task['title']}{est_str}{dispatch_str}"
             f" | {date_str}{tz_tag}"
             f" | Done: {done_count}/{total_count}"
-            f" | ~{fmt_duration(remaining)} left"
+            f" | Budget: ~{fmt_duration(remaining)}"
             f" | EOD: {eod}"
         )
     # No in_progress task. Distinguish "all done" from "nothing active but
@@ -1123,7 +1124,7 @@ def status_line(session, config=None):
         f"{header}"
         f" | {date_str}{tz_tag}"
         f" | Done: {done_count}/{total_count}"
-        f" | ~{fmt_duration(remaining)} left"
+        f" | Budget: ~{fmt_duration(remaining)}"
         f" | EOD: {eod}"
     )
 
@@ -1173,6 +1174,9 @@ def _task_record(idx, task):
     defer_reason = task.get("defer_reason")
     if defer_reason:
         record["defer_reason"] = defer_reason
+    original_title = task.get("original_title")
+    if original_title:
+        record["original_title"] = original_title
     return record
 
 
@@ -1246,7 +1250,7 @@ def format_task_list(session, config=None):
     eod = session.get("eod_target", "18:00")
     footer = (
         f"  Done: {done_count}/{total_count}"
-        f" | ~{fmt_duration(remaining)} left"
+        f" | Budget: ~{fmt_duration(remaining)}"
         f" | EOD: {eod}"
     )
     if not lines:

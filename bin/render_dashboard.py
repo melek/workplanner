@@ -440,7 +440,7 @@ def _budget_shortfall_message(session):
         if t.get("status") in ("pending", "in_progress", "blocked")
     )
     if remaining_min > 0 and remaining_min > time_left:
-        return f"~{fmt_duration(remaining_min)} work, {fmt_duration(time_left)} left"
+        return f"~{fmt_duration(remaining_min)} of tasks, {fmt_duration(time_left)} until EOD"
     return None
 
 
@@ -484,16 +484,32 @@ def _protected_block_minutes(config, now_min, eod_min):
     return total
 
 
-def _find_block_insert_position(tasks, block_start_min):
+def _find_block_insert_position(tasks, block_start_min, block_end_min=None):
     """Determine the task index where a protected block separator should be inserted.
 
-    Walk forward through tasks, accumulating wall-clock time from started_at of the
-    first in_progress task (or current time for pending tasks). The block goes between
-    the last task that finishes before the block and the first that finishes after.
+    A block that has already ended is anchored by recorded times: it goes
+    before the first task started at or after its end, else before the
+    remaining (not-done) work. Projecting from estimates would keep moving
+    a past block as the day goes on (issue #2).
+
+    A current or upcoming block walks forward through tasks, accumulating
+    wall-clock time from started_at of the first in_progress task (or
+    current time for pending tasks). The block goes between the last task
+    that finishes before the block and the first that finishes after.
     """
-    # Simple heuristic: insert before the first pending task whose cumulative
-    # start would fall after the block start time.
     now_min = datetime.now().hour * 60 + datetime.now().minute
+    if block_end_min is not None and block_end_min <= now_min:
+        for i, t in enumerate(tasks):
+            started = parse_hhmm(t.get("started_at"))
+            if started is not None and started >= block_end_min:
+                return i
+        for i, t in enumerate(tasks):
+            if t.get("status") != "done":
+                return i
+        return len(tasks)
+
+    # Insert before the first pending task whose cumulative start would
+    # fall after the block start time.
     cursor = now_min
     for i, t in enumerate(tasks):
         status = t.get("status", "pending")
@@ -517,6 +533,13 @@ def _find_block_insert_position(tasks, block_start_min):
         if cursor > block_start_min:
             return i
     return len(tasks)
+
+
+def _block_separator(block):
+    emoji = block.get("emoji", "")
+    prefix = f" {emoji}" if emoji else ""
+    return (f"──{prefix} {block.get('start', '')}–{block.get('end', '')} "
+            f"{block.get('label', '')} ──")
 
 
 # ── Task rendering ───────────────────────────────────────────────────
@@ -568,6 +591,19 @@ def _render_children(lines, children, idle_periods=None):
 # ── Main render ──────────────────────────────────────────────────────
 
 
+def _closed_label(date_str):
+    """'Session closed', qualified by how long ago when not today."""
+    try:
+        days = (datetime.now().date() - datetime.strptime(date_str, "%Y-%m-%d").date()).days
+    except ValueError:
+        return "Session closed"
+    if days <= 0:
+        return "Session closed"
+    if days == 1:
+        return "Session closed yesterday"
+    return f"Session closed {days} days ago"
+
+
 def render(session, config=None, idle_periods=None):
     if config is None:
         config = {}
@@ -592,22 +628,27 @@ def render(session, config=None, idle_periods=None):
     resolved = resolve_active_profile()
     if resolved is not None:
         profile_name = f" [{resolved.name}]"
-    header = f" WORKPLAN  {header_date} \u2014 {week}{profile_name}"
+    closed_tag = "  CLOSED" if session.get("checkpoint") == "closed" else ""
+    header = f" WORKPLAN  {header_date} \u2014 {week}{profile_name}{closed_tag}"
     cols = int(os.environ.get("COLUMNS", 0)) or shutil.get_terminal_size((50, 24)).columns
     pad = max(0, cols - len(header) - len(now_clock))
     header = f"{header}{' ' * pad}{DIM}{now_clock}{RESET}"
 
     lines = [header, "\u2500" * 29]
 
-    # Determine protected block insert positions
+    # Determine protected block insert positions. A position may hold
+    # several blocks, and a position that lands on a sub-task moves to the
+    # next top-level task, since separators render between top-level rows.
     protected_blocks = config.get("protected_blocks", [])
-    block_inserts = {}  # task_index -> block info
-    for block in protected_blocks:
+    block_inserts = {}  # task_index -> [block info, ...] in start order
+    for block in sorted(protected_blocks, key=lambda b: parse_hhmm(b.get("start")) or 0):
         b_start = parse_hhmm(block.get("start"))
         if b_start is None:
             continue
-        pos = _find_block_insert_position(tasks, b_start)
-        block_inserts[pos] = block
+        pos = _find_block_insert_position(tasks, b_start, parse_hhmm(block.get("end")))
+        while pos < len(tasks) and get_parent_id(tasks[pos]) is not None:
+            pos += 1
+        block_inserts.setdefault(pos, []).append(block)
 
     # Group tasks: parent/child via 'parent' field
     parent_children = {}
@@ -630,15 +671,9 @@ def render(session, config=None, idle_periods=None):
     for si, t in enumerate(standalone):
         orig_idx = standalone_indices[si] if si < len(standalone_indices) else si
 
-        # Check if a protected block goes before this task
-        if orig_idx in block_inserts:
-            block = block_inserts[orig_idx]
-            emoji = block.get("emoji", "")
-            label = block.get("label", "")
-            b_start = block.get("start", "")
-            b_end = block.get("end", "")
-            prefix = f" {emoji}" if emoji else ""
-            lines.append(f"\u2500\u2500{prefix} {b_start}\u2013{b_end} {label} \u2500\u2500")
+        # Check if protected blocks go before this task
+        for block in block_inserts.get(orig_idx, []):
+            lines.append(_block_separator(block))
 
         tid = t["id"]
         has_children = tid in parent_children
@@ -663,15 +698,9 @@ def render(session, config=None, idle_periods=None):
             right = _task_right(t, idle_periods)
             lines.append(f" {icon}  {tid:<4} {title}  {right}")
 
-    # Check if a block goes after all tasks
-    for pos, block in block_inserts.items():
-        if pos >= len(tasks):
-            emoji = block.get("emoji", "")
-            label = block.get("label", "")
-            b_start = block.get("start", "")
-            b_end = block.get("end", "")
-            prefix = f" {emoji}" if emoji else ""
-            lines.append(f"\u2500\u2500{prefix} {b_start}\u2013{b_end} {label} \u2500\u2500")
+    # Blocks that go after all tasks
+    for block in block_inserts.get(len(tasks), []):
+        lines.append(_block_separator(block))
 
     lines.append("\u2500" * 29)
 
@@ -721,7 +750,20 @@ def render(session, config=None, idle_periods=None):
         pass
     bl_str = f"  \u2502  Backlog: {bl_count}" if bl_count > 0 else ""
 
-    lines.append(f" Done: {GREEN}{done_count}{RESET}/{total_count}  \u2502  ~{remaining_str} left{bl_str}")
+    # A closed session is between days: EOD target, buffer and alerts
+    # describe a workday that is over, so show what carries over instead
+    # (issue #48).
+    if session.get("checkpoint") == "closed":
+        carrying = sum(1 for t in countable
+                       if t["status"] in ("pending", "in_progress", "blocked", "deferred"))
+        lines.append(f" Done: {GREEN}{done_count}{RESET}/{total_count}"
+                     f"  \u2502  Carrying over: {carrying}{bl_str}")
+        lines.append(f" {DIM}{_closed_label(date_str)} \u2014 next: /workplanner:start{RESET}")
+        return "\n".join(lines) + "\n"
+
+    # "Budget" is the summed estimate of unfinished tasks, not wall-clock
+    # time; the wall-clock side is EOD and Buffer (issue #50).
+    lines.append(f" Done: {GREEN}{done_count}{RESET}/{total_count}  \u2502  Budget: ~{remaining_str}{bl_str}")
     lines.append(f" EOD: {eod}  \u2502  Buffer: {buffer_label} ({buffer_detail})")
 
     # Alerts
