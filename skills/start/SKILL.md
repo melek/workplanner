@@ -446,8 +446,10 @@ Done: 1/7 │ ~4h25m left │ EOD: 18:00 │ Buffer: OK
 Use `wpl` (or `~/.workplanner/bin/wpl` if not on PATH) for all task state changes:
 
 ```bash
-wpl done
+wpl done                          # the current task
+wpl done t3                       # a named task; leaves the current task alone
 wpl blocked "waiting on API access"
+wpl blocked t4 "waiting on review"
 wpl defer
 wpl defer --until friday          # defer to backlog with target date
 wpl add "Review PR #4521" --est 30

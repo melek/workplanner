@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- **`done`, `blocked`, `defer` and `reckon` take an explicit target** (issue #54). `wpl done t3` acts on t3 and leaves the current-task pointer alone. Finishing a side task used to take switch → done → switch, and two agents switching took the pointer from each other. Reverses the "current task only" redirect from #18 (finding 5): `wpl done t3` now does what it says instead of erroring. For `blocked`, a leading `tN`/uid is the target and the remaining words are the reason. When the current task leaves `in_progress`, the pointer falls back to the one other in-progress, non-dispatched task, if there is exactly one.
+
 ### Fixed
+
+- **Concurrent `wpl` processes no longer lose updates** (issue #54). Each invocation holds an exclusive per-profile `flock` (`.wpl.lock`) across load → mutate → save. Before, 12 parallel `wpl add` calls kept 6 tasks; now they keep all 12. Every mutation is also appended to `mutations.jsonl` (argv, pid/ppid, optional `$WPL_AGENT`, affected tasks) so contention can be traced. `undo` is still a global snapshot stack; per-agent undo is left for a follow-up. Regression suite: `bin/test_issue_54.py`.
 
 - **Sub-tasks stay attached to their parent across list mutations** (issues #53, #55). `parent` is a positional index, and only `add` tried to maintain it — with a comparison that crashed on an explicit `parent: null`. `move`, `remove`, `backlog --from`, `backlog --promote` and `reckon drop` left it stale, so children pointed at the wrong task or at themselves. All six now share `parent_refs()` / `reindex_parents()`, which capture parents as object references before the mutation and re-derive indices after. Removing a parent makes its children top-level. Regression suite: `bin/test_issue_55.py`.
 - **`switch` always reclaims a dispatched task** (issue #47). `--no-pause` used to mean both "keep the previous task running" and "leave the target dispatched", so there was no way to reclaim a dispatched task while keeping another one in progress. It now governs only the previous task.

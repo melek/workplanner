@@ -55,14 +55,14 @@ When deferring, **prompt for a reason** — "waiting on legal", "underspecified"
 Let the user answer for all at once (free text, e.g. "t2 done, t5 defer — waiting on legal, t6 backlog friday"). Parse and apply each via transition CLI:
 
 ```bash
-wpl done
-wpl switch t5
-wpl defer --reason "waiting on legal"
-wpl switch t6
-wpl backlog --from-current --target friday   # sends to backlog with target date
+wpl done t2
+wpl defer t5 --reason "waiting on legal"
+wpl backlog --from t6 --target friday   # sends to backlog with target date
 ```
 
-**Backlog option:** When the user says "backlog" for a task, optionally with a date (e.g., "backlog friday", "backlog 2026-04-01"), move it to the backlog file instead of deferring. Use `--from-current` or `--from t{N}` with `--target` if a date is given. This is for work that doesn't belong on tomorrow's agenda but needs to surface later.
+Name each task explicitly — no `switch` needed, and the current-task pointer isn't disturbed between commands.
+
+**Backlog option:** When the user says "backlog" for a task, optionally with a date (e.g., "backlog friday", "backlog 2026-04-01"), move it to the backlog file instead of deferring. Use `--from t{N}` (or `--from-current`) with `--target` if a date is given. This is for work that doesn't belong on tomorrow's agenda but needs to surface later.
 
 **Deferral reckoning:** If `wpl defer` exits with code 2, the task has hit its deferral threshold (default: 3x). The CLI already printed the reckoning prompt (and will surface any prior `defer_reason` inline). Read the user's choice and apply via `wpl reckon <choice> [--date <date>] [--reason "..."]`. Options: `b` (break down — defer, then help decompose), `d` (delegate), `x` (drop), `t` (timebox to backlog, requires `--date`), `k` (keep deferring).
 

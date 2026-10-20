@@ -12,10 +12,16 @@ import json
 import os
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+try:
+    import fcntl
+except ImportError:  # Windows: no advisory locks; run single-writer as before.
+    fcntl = None
 
 WPL_ROOT = Path(os.environ["WPL_ROOT"]) if os.environ.get("WPL_ROOT") else Path.home() / ".workplanner"
 
@@ -435,7 +441,41 @@ def resolve_paths():
         # profile-name path, never under profiles/active/. This sidesteps the
         # known profile-symlink race (issue #10) for this artifact.
         HANDOFFS = root / "handoffs"
+        LOCK = root / ".wpl.lock"
+        MUTATION_LOG = root / "mutations.jsonl"
     return P
+
+
+# Held for the rest of the process once taken, so a command's whole
+# load → mutate → save cycle is serialized against other wpl processes
+# on the same profile (issue #54). Released by the OS at exit.
+_PROFILE_LOCK = None
+LOCK_TIMEOUT_S = 10
+
+
+def lock_profile():
+    """Take the exclusive per-profile lock, waiting up to LOCK_TIMEOUT_S."""
+    global _PROFILE_LOCK
+    if _PROFILE_LOCK is not None or fcntl is None:
+        return
+    paths = resolve_paths()
+    try:
+        fd = open(paths.LOCK, "a")
+    except OSError:
+        return  # fail open: an unwritable profile dir shouldn't block reads
+    deadline = time.monotonic() + LOCK_TIMEOUT_S
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() > deadline:
+                fd.close()
+                fail(f"Another wpl process has held the {paths.PROFILE_NAME} "
+                     f"profile lock for over {LOCK_TIMEOUT_S}s. Retry, or check "
+                     f"for a hung wpl process.")
+            time.sleep(0.05)
+    _PROFILE_LOCK = fd
 
 
 USER_JSON = WPL_ROOT / "user.json"
@@ -674,6 +714,7 @@ def load_session():
     """
     global _STALE_SESSION_WARNED
     paths = resolve_paths()
+    lock_profile()
     try:
         with open(paths.SESSION) as f:
             session = json.load(f)
@@ -780,6 +821,38 @@ def current_task(session):
     if idx is None or idx < 0 or idx >= len(tasks):
         return None, None
     return idx, tasks[idx]
+
+
+def advance_target(session, raw):
+    """Resolve the task a done/blocked/defer/reckon acts on.
+
+    An explicit target (`t3` or a uid) wins and leaves the current-task
+    pointer alone, so side completions and concurrent agents don't fight
+    over it (issue #54). Without one, the current task is used.
+    """
+    if raw:
+        return parse_task_target(raw, session)
+    idx, task = current_task(session)
+    if task is None:
+        fail("No current task. Name the task instead, e.g. `wpl done t3` "
+             "(see `wpl status` for IDs).")
+    return idx, task
+
+
+def settle_current(session):
+    """Keep `current_task_index` pointing at an in-progress task.
+
+    If the current task has left `in_progress`, fall back to the one other
+    in-progress, non-dispatched task when there is exactly one; otherwise
+    clear the pointer. Stops the pointer and task status from disagreeing
+    after a task finishes (issue #54).
+    """
+    idx, task = current_task(session)
+    if task is not None and task.get("status") == "in_progress":
+        return
+    live = [i for i, t in enumerate(session.get("tasks", []))
+            if t.get("status") == "in_progress" and not t.get("dispatched")]
+    session["current_task_index"] = live[0] if len(live) == 1 else None
 
 
 def parent_refs(tasks):
@@ -915,6 +988,7 @@ def fmt_duration(mins):
 def load_backlog():
     """Load backlog.json, creating it if missing."""
     paths = resolve_paths()
+    lock_profile()
     try:
         with open(paths.BACKLOG) as f:
             return json.load(f)
@@ -1250,6 +1324,40 @@ def _status_payload(session, config=None):
     }
 
 
+MAX_MUTATION_LOG = 1000
+
+
+def log_mutation(action, affected):
+    """Append one line per mutation to mutations.jsonl (issue #54).
+
+    Records who (pid/ppid, plus $WPL_AGENT if the caller sets one), when,
+    the exact argv, and the affected tasks' resulting state, so contention
+    between agents can be reconstructed after the fact. Non-fatal.
+    """
+    try:
+        paths = resolve_paths()
+        entry = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "action": action,
+            "argv": sys.argv[1:],
+            "pid": os.getpid(),
+            "ppid": os.getppid(),
+            "agent": os.environ.get("WPL_AGENT"),
+            "affected": [
+                {"uid": t.get("uid"), "tid": tid(i), "title": t.get("title"),
+                 "status": t.get("status")}
+                for (i, t) in (affected or [])
+            ],
+        }
+        with open(paths.MUTATION_LOG, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+        lines = paths.MUTATION_LOG.read_text().splitlines()
+        if len(lines) > MAX_MUTATION_LOG:
+            paths.MUTATION_LOG.write_text("\n".join(lines[-MAX_MUTATION_LOG:]) + "\n")
+    except (OSError, SystemExit):
+        pass
+
+
 def emit_mutation(action, session, affected=None, config=None, human_line=None):
     """Emit a mutation's stdout — text (one-liner + full list) or JSON.
 
@@ -1258,6 +1366,7 @@ def emit_mutation(action, session, affected=None, config=None, human_line=None):
     response. `human_line` is the one-line confirmation printed first
     in text mode.
     """
+    log_mutation(action, affected)
     if OUTPUT_FORMAT == "json":
         try:
             profile_name = resolve_paths().PROFILE_NAME
@@ -1309,11 +1418,9 @@ def _title_matches(actual, echoed):
 
 def cmd_done(args):
     session = load_session()
-    idx, task = current_task(session)
-    if task is None:
-        fail("No current task.")
-    if task["status"] != "in_progress":
-        fail(f"{tid(idx)} is {task['status']}, not in_progress.")
+    idx, task = advance_target(session, args.target)
+    if task["status"] not in ("in_progress", "pending", "blocked"):
+        fail(f"{tid(idx)} is {task['status']}, can't mark done.")
 
     # Echo-check: --as "<title>" must match the target task's title.
     echoed = getattr(args, "as_title", None)
@@ -1337,7 +1444,7 @@ def cmd_done(args):
     task["actual_min"] = actual
     task.pop("dispatched", None)
 
-    session["current_task_index"] = None
+    settle_current(session)
 
     save_session(session)
     render()
@@ -1350,20 +1457,22 @@ def cmd_done(args):
 
 def cmd_blocked(args):
     session = load_session()
-    idx, task = current_task(session)
-    if task is None:
-        fail("No current task.")
-    if task["status"] != "in_progress":
-        fail(f"{tid(idx)} is {task['status']}, not in_progress.")
+    # `blocked` takes free-text reason words, so an explicit target is
+    # recognized only as a leading tN or uid token.
+    words = list(args.reason or [])
+    target = words.pop(0) if words and _looks_like_task_target(words[0]) else None
+    idx, task = advance_target(session, target)
+    if task["status"] not in ("in_progress", "pending"):
+        fail(f"{tid(idx)} is {task['status']}, can't mark blocked.")
 
     task["status"] = "blocked"
-    reason = " ".join(args.reason) if args.reason else None
+    reason = " ".join(words) if words else None
     if reason:
         existing = task.get("notes") or ""
         sep = " " if existing else ""
         task["notes"] = f"{existing}{sep}Blocked: {reason}".strip()
 
-    session["current_task_index"] = None
+    settle_current(session)
 
     save_session(session)
     render()
@@ -1378,9 +1487,7 @@ def cmd_blocked(args):
 
 def cmd_defer(args):
     session = load_session()
-    idx, task = current_task(session)
-    if task is None:
-        fail("No current task.")
+    idx, task = advance_target(session, args.target)
     if task["status"] not in ("in_progress", "pending"):
         fail(f"{tid(idx)} is {task['status']}, can't defer.")
 
@@ -1450,11 +1557,8 @@ def cmd_defer(args):
             print(f"  [k] Keep deferring \u2014 I'll get to it")
         sys.exit(2)  # Signal to calling skill that reckoning is needed
 
-    was_current = (idx == session.get("current_task_index"))
     task["status"] = "deferred"
-
-    if was_current:
-        session["current_task_index"] = None
+    settle_current(session)
 
     save_session(session)
     render()
@@ -1662,10 +1766,11 @@ def cmd_remove(args):
     # Adjust current_task_index
     if cur_idx is not None:
         if cur_idx == target:
-            # Removed the current task — don't auto-advance
+            # Removed the current task — don't auto-advance to a pending one
             session["current_task_index"] = None
         elif cur_idx > target:
             session["current_task_index"] = cur_idx - 1
+    settle_current(session)
 
     save_session(session)
     render()
@@ -1776,6 +1881,7 @@ def _move_task_to_backlog(session, idx, target_date=None, not_before=None, deadl
             session["current_task_index"] = None
         elif cur_idx > idx:
             session["current_task_index"] = cur_idx - 1
+    settle_current(session)
 
     # Save both (session undo captures session state, backlog saves separately)
     save_session(session)
@@ -2136,11 +2242,9 @@ def _backlog_edit(args):
 
 
 def cmd_reckon(args):
-    """Apply a reckoning decision to the current task after deferral threshold."""
+    """Apply a reckoning decision after deferral threshold (current or named task)."""
     session = load_session()
-    idx, task = current_task(session)
-    if task is None:
-        fail("No current task.")
+    idx, task = advance_target(session, args.target)
 
     # If the user passed a --reason, attach/update it now so it surfaces in the
     # post-reckon output line and travels with the task (whether it stays in
@@ -2153,10 +2257,8 @@ def cmd_reckon(args):
     choice = args.choice.lower()
     if choice in ("k", "keep"):
         # Force defer despite threshold
-        was_current = (idx == session.get("current_task_index"))
         task["status"] = "deferred"
-        if was_current:
-            session["current_task_index"] = None
+        settle_current(session)
         save_session(session)
         render()
         count = task.get("deferral_count", 0)
@@ -2178,6 +2280,7 @@ def cmd_reckon(args):
                 session["current_task_index"] = None
             elif cur_idx > idx:
                 session["current_task_index"] = cur_idx - 1
+        settle_current(session)
         save_session(session)
         render()
         human = f"\u2716 {tid(idx)} dropped: \"{title}\". [{remaining_summary(session)}]"
@@ -2195,10 +2298,8 @@ def cmd_reckon(args):
 
     elif choice in ("b", "break"):
         # Just defer — the skill will handle the decomposition interactively
-        was_current = (idx == session.get("current_task_index"))
         task["status"] = "deferred"
-        if was_current:
-            session["current_task_index"] = None
+        settle_current(session)
         save_session(session)
         render()
         reason_tag = f" \u2014 {prior_reason}" if prior_reason else ""
@@ -2207,10 +2308,8 @@ def cmd_reckon(args):
                       config=load_config(), human_line=human)
 
     elif choice in ("d", "delegate"):
-        was_current = (idx == session.get("current_task_index"))
         task["status"] = "deferred"
-        if was_current:
-            session["current_task_index"] = None
+        settle_current(session)
         existing = task.get("notes") or ""
         sep = " " if existing else ""
         task["notes"] = f"{existing}{sep}Reckoning: delegate/reassign.".strip()
@@ -2695,21 +2794,13 @@ def cmd_config(args):
 # ── CLI ──────────────────────────────────────────────────────────────
 
 
-# Verbs that intentionally take no task-target positional: they operate
-# only on the current task (the "two bookends" semantics). When the LLM
-# reaches for `wpl done t3`, we short-circuit argparse with a redirect
-# rather than letting it surface `unrecognized arguments: t3` (done /
-# defer) or silently swallow `t3` as a blocking reason (blocked).
-_CURRENT_TASK_VERBS = {"done", "blocked", "defer"}
-
-
 def _looks_like_task_target(token):
     """True iff `token` plausibly names a task (tN or 8-char hex uid).
 
-    Deliberately conservative: we only want to redirect the LLM when it
-    clearly mis-aimed a task at a current-only verb. A blocked reason
-    like "blocked on 3 tests" must pass through unchanged — bare
-    integers are NOT flagged.
+    Used by `blocked`, whose positional words are a free-text reason, to
+    recognize a leading explicit target. Deliberately conservative: a
+    reason like "on 3 tests" must pass through unchanged — bare integers
+    are NOT treated as targets.
     """
     if not token or token.startswith("-"):
         return False
@@ -2719,84 +2810,6 @@ def _looks_like_task_target(token):
     if len(token) == 8 and all(c in "0123456789abcdef" for c in token):
         return True
     return False
-
-
-def _intercept_current_task_verb_misuse(argv):
-    """Redirect `wpl {done,blocked,defer} tN` to the switch-then-verb pattern.
-
-    Walks argv looking for (optional) global flags, then the subcommand.
-    If the subcommand is a current-task verb and any following
-    positional is a task target, emit a structured error and exit.
-    Does not widen the verb surface — this is purely a diagnostic
-    redirect.
-    """
-    i = 0
-    # Skip global flags known to take a value or be a boolean switch.
-    while i < len(argv):
-        tok = argv[i]
-        if tok in ("--format", "--profile"):
-            i += 2
-            continue
-        if tok.startswith("--format=") or tok.startswith("--profile="):
-            i += 1
-            continue
-        if tok in ("-h", "--help"):
-            # Let argparse handle help.
-            return
-        break
-    if i >= len(argv):
-        return
-    verb = argv[i]
-    if verb not in _CURRENT_TASK_VERBS:
-        return
-    # Scan subsequent tokens for a mis-aimed task target. Stop at
-    # recognised verb-local flags so `wpl defer --until friday` isn't
-    # second-guessed and so `wpl blocked --reason ...` style usage
-    # (should it ever land) isn't confused.
-    for token in argv[i + 1:]:
-        if token.startswith("-"):
-            # Any flag ends the scan. Argparse handles flag validation.
-            return
-        if _looks_like_task_target(token):
-            # Text vs JSON: emit_error handles the branching. Exit 1
-            # preserves the "precondition failure" contract for every
-            # wpl error path.
-            # Need OUTPUT_FORMAT set before emit_error is used; peek at
-            # global flags we already skipped.
-            global OUTPUT_FORMAT
-            OUTPUT_FORMAT = _peek_output_format(argv) or "text"
-            # Per-verb phrasing so the "different task" sentence reads
-            # naturally in english. All three map to the same pattern:
-            # switch to the target first, then run the current-task verb.
-            phrasing = {
-                "done": "mark a different task done",
-                "blocked": "mark a different task blocked",
-                "defer": "defer a different task",
-            }[verb]
-            emit_error(
-                f"'{verb}' operates on the current task only (no task target). "
-                f"To {phrasing}, run: wpl switch {token} && wpl {verb}",
-                verb=verb,
-                target=token,
-                suggestion=f"wpl switch {token} && wpl {verb}",
-            )
-    # No mis-aimed target found — let argparse proceed normally.
-    return
-
-
-def _peek_output_format(argv):
-    """Return the --format value from argv, or None. Pre-parse helper.
-
-    Called before argparse runs so errors emitted during the pre-parse
-    hook can honour --format json. Doesn't validate — an invalid value
-    just falls through to the argparse default path.
-    """
-    for i, tok in enumerate(argv):
-        if tok == "--format" and i + 1 < len(argv):
-            return argv[i + 1]
-        if tok.startswith("--format="):
-            return tok.split("=", 1)[1]
-    return None
 
 
 def build_parser():
@@ -2824,7 +2837,9 @@ def build_parser():
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_done = sub.add_parser("done", help="Mark current task done.")
+    p_done = sub.add_parser("done", help="Mark a task done (default: the current task).")
+    p_done.add_argument("target", nargs="?", default=None,
+                        help="Task to mark done (t3 or uid). Leaves the current-task pointer alone.")
     p_done.add_argument(
         "--as",
         dest="as_title",
@@ -2835,10 +2850,13 @@ def build_parser():
              "(case-insensitive, whitespace-tolerant).",
     )
 
-    p_blocked = sub.add_parser("blocked", help="Mark current task blocked.")
-    p_blocked.add_argument("reason", nargs="*", help="Blocking reason (optional).")
+    p_blocked = sub.add_parser("blocked", help="Mark a task blocked (default: the current task).")
+    p_blocked.add_argument("reason", nargs="*",
+                           help="Optional leading target (t3 or uid), then the blocking reason.")
 
-    p_defer = sub.add_parser("defer", help="Defer current task.")
+    p_defer = sub.add_parser("defer", help="Defer a task (default: the current task).")
+    p_defer.add_argument("target", nargs="?", default=None,
+                         help="Task to defer (t3 or uid). Leaves the current-task pointer alone.")
     p_defer.add_argument("--until", type=str, default=None, help="Target date (YYYY-MM-DD, tomorrow, monday, next-week). Sends to backlog.")
     p_defer.add_argument("--reason", type=str, default=None, help="Why the task is being deferred. Persists on the task and surfaces in reckoning and handoff.")
 
@@ -2916,6 +2934,8 @@ def build_parser():
 
     p_reckon = sub.add_parser("reckon", help="Apply a reckoning decision after deferral threshold.")
     p_reckon.add_argument("choice", help="Decision: b(reak), d(elegate), x/drop, t(imebox), k(eep).")
+    p_reckon.add_argument("target", nargs="?", default=None,
+                          help="Task to reckon (t3 or uid). Default: the current task.")
     p_reckon.add_argument("--date", type=str, default=None, help="Target date for timebox (required for 't').")
     p_reckon.add_argument("--reason", type=str, default=None, help="Update the defer_reason alongside the reckoning decision.")
 
@@ -3115,18 +3135,6 @@ def main():
         print("You can remove it after verifying everything works.")
 
     ensure_wrapper()
-
-    # Pre-parse hook: catch the common "verbs operate on current task only"
-    # footgun before argparse does. `done`, `blocked`, and `defer` take no
-    # task-target positional — they operate on whatever `current_task_index`
-    # points at. Argparse's default message (`unrecognized arguments: t3`,
-    # or silent acceptance for `blocked` where extras become the reason)
-    # doesn't tell the LLM how to recover. Redirect to the documented
-    # two-step pattern instead. Detection is conservative: only `tN`
-    # (digits after t) or an 8-char hex uid is treated as a mis-aimed
-    # task target. Real `blocked` reasons that happen to contain numbers
-    # still pass through untouched. See issue #18, finding 5.
-    _intercept_current_task_verb_misuse(sys.argv[1:])
 
     parser = build_parser()
     args = parser.parse_args()

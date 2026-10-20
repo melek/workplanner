@@ -214,17 +214,21 @@ def main():
              "estimate_min": 20, "source": "manual"},
         ], current_index=0)
 
-        # ── V5: done/blocked/defer t3 redirects to switch pattern ────
-        for verb in ("done", "blocked", "defer"):
-            rc, out, err = _run(ws, env, verb, "t3")
-            assert rc == 1, f"V5 ({verb}): expected rc=1, got {rc}"
-            assert "current task" in err, \
-                f"V5 ({verb}): expected 'current task' in error, got {err!r}"
-            assert f"wpl switch t3 && wpl {verb}" in err, \
-                f"V5 ({verb}): missing switch-pattern redirect: {err!r}"
-        # Backlog should be unpolluted (blocked t3 did not silent-accept).
+        # ── V5: done/blocked/defer tN act on the named task ──────────
+        # Originally a redirect to `wpl switch tN && wpl <verb>`; since
+        # issue #54 the verbs take an explicit target instead.
+        for verb, target, expected in (("done", "t3", "done"),
+                                       ("blocked", "t2", "blocked")):
+            rc, out, err = _run(ws, env, verb, target)
+            assert rc == 0, f"V5 ({verb}): expected rc=0, got {rc}: {err!r}"
+            s = json.loads((profile_a / "session" / "current-session.json").read_text())
+            got = s["tasks"][int(target[1:]) - 1]["status"]
+            assert got == expected, f"V5 ({verb}): {target} is {got}, expected {expected}"
+            assert s["current_task_index"] == 0, \
+                f"V5 ({verb}): pointer moved to {s['current_task_index']}"
+        # Backlog should be unpolluted (`blocked t2` named a task, not a reason).
         rc, out, _ = _run(ws, env, "backlog", "--list", check_exit=0)
-        assert "t3" not in out, f"V5: blocked t3 polluted backlog: {out!r}"
+        assert "t2" not in out, f"V5: blocked t2 polluted backlog: {out!r}"
         # Sanity: multi-word blocking reason still works.
         # Need an in_progress task; re-init and switch.
         _write_session(profile_a, tasks=[
@@ -235,7 +239,7 @@ def main():
                             check_exit=0)
         assert "on code review" in (out + err) or "blocked" in out, \
             f"V5 sanity: multi-word reason: out={out!r} err={err!r}"
-        print("V5: done/blocked/defer tN redirected [OK]")
+        print("V5: done/blocked tN act on the named task [OK]")
 
         # ── V6: session-hook resolves from cwd (fix #6) ──────────────
         # Write today's session in pb and hit the hook from ws_b.
