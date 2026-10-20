@@ -24,6 +24,9 @@ except ImportError:  # Windows: no advisory locks; run single-writer as before.
     fcntl = None
 
 WPL_ROOT = Path(os.environ["WPL_ROOT"]) if os.environ.get("WPL_ROOT") else Path.home() / ".workplanner"
+# An overridden root (tests, sandboxes) must not touch machine-global state:
+# the /tmp/wp legacy symlinks or the one-time ~/work-planning migration.
+WPL_ROOT_OVERRIDDEN = bool(os.environ.get("WPL_ROOT"))
 
 
 # ── Profile resolution ──────────────────────────────────────────────
@@ -3080,8 +3083,9 @@ def ensure_wrapper():
     _write_wrapper(RENDER_WRAPPER, f"#!/bin/bash\nexec python3 {render_script} \"$@\"\n")
 
     # Legacy symlinks: /tmp/wp → ~/.workplanner/bin/wpl
-    _ensure_symlink(LEGACY_WRAPPER, WRAPPER)
-    _ensure_symlink(LEGACY_RENDER_WRAPPER, RENDER_WRAPPER)
+    if not WPL_ROOT_OVERRIDDEN:
+        _ensure_symlink(LEGACY_WRAPPER, WRAPPER)
+        _ensure_symlink(LEGACY_RENDER_WRAPPER, RENDER_WRAPPER)
 
 
 def _write_wrapper(path, content):
@@ -3116,7 +3120,7 @@ def _ensure_symlink(link, target):
 def main():
     # ── Backward compatibility migration ──────────────────────────────
     old_root = Path.home() / "work-planning"
-    if old_root.is_dir() and not WPL_ROOT.is_dir():
+    if not WPL_ROOT_OVERRIDDEN and old_root.is_dir() and not WPL_ROOT.is_dir():
         print(f"Found legacy data at {old_root}/")
         print(f"Migrating to {WPL_ROOT}/ ...")
         WPL_ROOT.mkdir(parents=True)
