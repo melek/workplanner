@@ -130,7 +130,7 @@ wpl add "Pull HAPAI candidates into v0.jsonl" --est 45 --parent t1
 
 When to use it: project-scoped work with multiple sub-steps, a shared gate, and enough coherence that the parent is a meaningful unit of progress. When to skip it: a normal day's mixed-topic agenda — flat siblings read better than a tree of unrelated items.
 
-The `parent` field is an integer index into the task array (see `docs/state-schema.md`). There is no re-parent command today; if you need to restructure an existing flat group, remove the siblings and re-add them with `--parent`.
+The `parent` field is an integer index into the task array (see `docs/state-schema.md`). Every command that inserts, moves or removes tasks re-derives it, so sub-tasks stay attached; removing a parent makes its children top-level. There is no re-parent command today; if you need to restructure an existing flat group, remove the siblings and re-add them with `--parent`.
 
 All mutating commands:
 1. Read and validate `current-session.json`
@@ -189,7 +189,7 @@ A `PostToolUse` plugin hook (`bin/post-tool-use-hook.sh`) provides a secondary f
 - If target is `pending`, sets it to `in_progress` with `started_at`
 - **Auto-pauses** the previous `in_progress` task (sets it back to `pending`)
 - Use `--no-pause` to keep the previous task `in_progress` (for parallel/dispatched work)
-- Switching to a dispatched task (without `--no-pause`) **reclaims** it — clears the `dispatched` flag
+- Switching to a dispatched task **reclaims** it — clears the `dispatched` flag. `--no-pause` only affects the previous task
 
 ### rename
 
@@ -226,5 +226,5 @@ When tasks are dispatched to separate tmux panes via `/workplanner:dispatch`:
 - `/workplanner:pickup` and `/workplanner:dispatch` should call `dispatch` on the target task
 - Any session can use `wpl` (or `~/.workplanner/bin/wpl`) to update task state (the wrapper self-heals on every run)
 - `done` warns when completing a dispatched task (another session may still be working on it)
-- `switch` to a dispatched task reclaims it (clears the flag); use `--no-pause` to keep it dispatched
+- `switch` to a dispatched task reclaims it (clears the flag), with or without `--no-pause`
 - `transition.py` uses atomic writes (tmp → mv) which prevents file corruption but not logical races — coordinate through the main session to avoid conflicting state changes

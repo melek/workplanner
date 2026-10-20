@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Sub-tasks stay attached to their parent across list mutations** (issues #53, #55). `parent` is a positional index, and only `add` tried to maintain it — with a comparison that crashed on an explicit `parent: null`. `move`, `remove`, `backlog --from`, `backlog --promote` and `reckon drop` left it stale, so children pointed at the wrong task or at themselves. All six now share `parent_refs()` / `reindex_parents()`, which capture parents as object references before the mutation and re-derive indices after. Removing a parent makes its children top-level. Regression suite: `bin/test_issue_55.py`.
+- **`switch` always reclaims a dispatched task** (issue #47). `--no-pause` used to mean both "keep the previous task running" and "leave the target dispatched", so there was no way to reclaim a dispatched task while keeping another one in progress. It now governs only the previous task.
+
 ## 1.0.0-beta.5
 
 Methodology-reach release — four merged PRs (#34, #36/#37/#38, this) across issues #33, #35, #40, focused on closing the gap between the plugin's engine capabilities and the skill prose that teaches them to the LLM.

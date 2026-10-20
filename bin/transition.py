@@ -782,6 +782,36 @@ def current_task(session):
     return idx, tasks[idx]
 
 
+def parent_refs(tasks):
+    """Capture each sub-task's parent as an object reference.
+
+    `parent` is stored as a positional index into `tasks`, so any insert,
+    move or removal invalidates it. Call this before mutating the list and
+    `reindex_parents` after (issues #53, #55). A `parent` of None, or one
+    that doesn't point at a task, is ignored.
+    """
+    refs = []
+    for t in tasks:
+        p = t.get("parent")
+        if isinstance(p, int) and 0 <= p < len(tasks):
+            refs.append((t, tasks[p]))
+    return refs
+
+
+def reindex_parents(tasks, refs):
+    """Rewrite `parent` indices from refs captured by `parent_refs`.
+
+    A sub-task whose parent is no longer in `tasks` becomes top-level.
+    """
+    pos = {id(t): i for i, t in enumerate(tasks)}
+    for child, parent in refs:
+        if id(child) not in pos:
+            continue
+        if id(parent) in pos:
+            child["parent"] = pos[id(parent)]
+        else:
+            child.pop("parent", None)
+
 
 def elapsed_minutes(started_at):
     """Wall-clock minutes from HH:MM to now."""
@@ -1490,12 +1520,9 @@ def cmd_add(args):
     else:
         insert_pos = len(tasks)
 
-    # Adjust existing parent indices that will shift due to insertion
-    for t in tasks[insert_pos:]:
-        if "parent" in t and t["parent"] >= insert_pos:
-            t["parent"] += 1
-
+    refs = parent_refs(tasks)
     tasks.insert(insert_pos, new_task)
+    reindex_parents(tasks, refs)
 
     # Set parent field (using post-insertion index)
     if parent_idx is not None:
@@ -1535,9 +1562,9 @@ def cmd_switch(args):
         task["status"] = "in_progress"
         task["started_at"] = now_hhmm()
 
-    # Reclaim: switching to a dispatched task without --no-pause clears the flag
-    if not args.no_pause and task.get("dispatched"):
-        task.pop("dispatched", None)
+    # Reclaim: switching to a dispatched task clears the flag. --no-pause
+    # only governs the previously current task (issue #47).
+    task.pop("dispatched", None)
 
     session["current_task_index"] = target
 
@@ -1577,9 +1604,11 @@ def cmd_move(args):
     # Pop from source, then insert at dest (the desired final position).
     # No dest adjustment needed — parse_position returns the target index
     # the user wants the task to land at.
+    refs = parent_refs(tasks)
     moved = tasks.pop(source)
     dest = min(dest, len(tasks))
     tasks.insert(dest, moved)
+    reindex_parents(tasks, refs)
 
     # Adjust current_task_index
     if cur_idx is not None:
@@ -1626,7 +1655,9 @@ def cmd_remove(args):
 
     title = task["title"]
     removed_snapshot = dict(task)
+    refs = parent_refs(tasks)
     tasks.pop(target)
+    reindex_parents(tasks, refs)
 
     # Adjust current_task_index
     if cur_idx is not None:
@@ -1737,7 +1768,9 @@ def _move_task_to_backlog(session, idx, target_date=None, not_before=None, deadl
 
     # Remove from session
     cur_idx = session.get("current_task_index")
+    refs = parent_refs(tasks)
     tasks.pop(idx)
+    reindex_parents(tasks, refs)
     if cur_idx is not None:
         if cur_idx == idx:
             session["current_task_index"] = None
@@ -1994,7 +2027,9 @@ def _backlog_promote(args):
         insert_pos = cur_idx + 1
     else:
         insert_pos = len(tasks)
+    refs = parent_refs(tasks)
     tasks.insert(insert_pos, new_task)
+    reindex_parents(tasks, refs)
 
     if cur_idx is not None and insert_pos <= cur_idx:
         session["current_task_index"] = cur_idx + 1
@@ -2134,7 +2169,9 @@ def cmd_reckon(args):
         title = task["title"]
         tasks = session.get("tasks", [])
         dropped_snapshot = dict(task)
+        refs = parent_refs(tasks)
         tasks.pop(idx)
+        reindex_parents(tasks, refs)
         cur_idx = session.get("current_task_index")
         if cur_idx is not None:
             if cur_idx == idx:
