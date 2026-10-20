@@ -56,7 +56,7 @@ ls "$PROFILE_ROOT/briefings/{session.date}/" 2>/dev/null
 
 A briefing is **fresh** if:
 - It exists in the directory matching `session.date`
-- Its filename contains the task's UID (e.g., `t02-e8a45522-ciab-docs.md`)
+- Its filename contains the task's UID (e.g., `t02-e8a45522-api-docs.md`)
 
 If all targeted tasks already have fresh briefings, report: "All briefings are current. Use `--force` to regenerate."
 
@@ -162,7 +162,7 @@ Where:
 - `{uid}` is the task's 8-char UID
 - `{slug}` is a kebab-case slug from the title (max 30 chars, truncated at word boundary)
 
-Example: `t02-e8a45522-ciab-docs.md`
+Example: `t02-e8a45522-api-docs.md`
 
 ### Step 7: Collect and process workplan signals
 
@@ -290,7 +290,7 @@ Session: {session.date}, {session.week}
 
 ## Files
 - [t01-a1b2c3d4-fix-email-bot.md](t01-a1b2c3d4-fix-email-bot.md)
-- [t02-e8a45522-ciab-docs.md](t02-e8a45522-ciab-docs.md)
+- [t02-e8a45522-api-docs.md](t02-e8a45522-api-docs.md)
 - [t04-f9g8h7i6-performance-analysis.md](t04-f9g8h7i6-performance-analysis.md)
 - [t05-h1i2j3k4-team-rotation-setup.md](t05-h1i2j3k4-team-rotation-setup.md)
 ```

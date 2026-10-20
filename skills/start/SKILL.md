@@ -377,8 +377,8 @@ Apply the triage framework from `${CLAUDE_PLUGIN_ROOT}/docs/triage-framework.md`
 
      ```
      Carryover from yesterday:
-     1. Review Stéphane's PR (t3 est ~30m, ref: HAL-123)
-        Reason yesterday: "waiting on Stéphane to push fixture refactor"
+     1. Review a teammate's PR (t3 est ~30m, ref: PROJ-123)
+        Reason yesterday: "waiting on the author to push a fixture refactor"
      2. Update API docs (t5 est ~15m)
         Reason yesterday: "underspecified — what do we actually want to document?"
      ```
