@@ -14,19 +14,32 @@
 # declared workspace) still gets context injected. Hook must fit in the
 # 5s SessionStart timeout — keep every branch lean.
 
-WPL_BIN="${WPL_BIN:-$HOME/.workplanner/bin/wpl}"
-if [ ! -x "$WPL_BIN" ]; then
-    WPL_BIN=$(command -v wpl 2>/dev/null || true)
+# Prefer this plugin version's own CLI over the ~/.workplanner/bin/wpl
+# wrapper. The wrapper hardcodes the versioned plugin path it was written
+# from, and Claude Code prunes old version dirs after an upgrade, so it can
+# point at a deleted directory. Running transition.py from
+# $CLAUDE_PLUGIN_ROOT rewrites the wrapper (ensure_wrapper) as a side
+# effect, so every session start repairs it. An explicit $WPL_BIN wins.
+if [ -n "${WPL_BIN:-}" ]; then
+    WPL_CMD=("$WPL_BIN")
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "$CLAUDE_PLUGIN_ROOT/bin/transition.py" ]; then
+    WPL_CMD=(python3 "$CLAUDE_PLUGIN_ROOT/bin/transition.py")
+elif [ -x "$HOME/.workplanner/bin/wpl" ]; then
+    WPL_CMD=("$HOME/.workplanner/bin/wpl")
+elif command -v wpl >/dev/null 2>&1; then
+    WPL_CMD=("$(command -v wpl)")
+else
+    WPL_CMD=()
 fi
 
 PROFILE_ROOT=""
-if [ -n "${WPL_BIN:-}" ] && [ -x "$WPL_BIN" ]; then
+if [ "${#WPL_CMD[@]}" -gt 0 ]; then
     # Resolve the profile root once via `wpl`. If resolution fails (no
     # profile claims this cwd, no single-profile fallback available),
     # the call exits non-zero and stderr is swallowed. WPL_CHILD=1
     # suppresses the interactive first-run prompt since there's no TTY
     # here.
-    PROFILE_ROOT=$(WPL_CHILD=1 "$WPL_BIN" profile whoami --print-root 2>/dev/null)
+    PROFILE_ROOT=$(WPL_CHILD=1 "${WPL_CMD[@]}" profile whoami --print-root 2>/dev/null)
 fi
 
 # Fallback: the legacy `active` symlink. Preserved so single-profile
