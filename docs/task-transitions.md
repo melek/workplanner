@@ -26,9 +26,9 @@ The `wpl` wrapper lives at `~/.workplanner/bin/wpl` and forwards to `bin/transit
 
 | Command | Args | Effect |
 |---------|------|--------|
-| `done` | `[--as "<title>"]` | Mark **current task** done (no positional target — see "Current-task verbs" below) |
-| `blocked` | `[reason...]` | Mark **current task** blocked; remaining args become the free-text reason |
-| `defer` | `[--until DATE] [--reason ...]` | Defer **current task**; with `--until` sends to backlog with target date |
+| `done` | `[target] [--as "<title>"]` | Mark a task done — the named one, or the current task if omitted (see "Explicit targets" below) |
+| `blocked` | `[target] [reason...]` | Mark a task blocked; a leading `tN`/uid names the task, the remaining words are the free-text reason |
+| `defer` | `[target] [--until DATE] [--reason ...]` | Defer a task (named or current); with `--until` sends to backlog with target date |
 | `add` | `<title> [flags]` | Add a new task (see flags below) |
 | `move` | `<source> --to <dest>` | Reorder a task to a new position |
 | `switch` | `<target> [--no-pause]` | Switch focus to a different task |
@@ -57,15 +57,20 @@ consulted. See `docs/profiles.md` for the full flow and migration notes.
 
 `done` and `remove` accept an optional `--as "<title>"` argument. When present, the CLI compares the echoed title to the target task's actual title (case-insensitive, whitespace-tolerant). On mismatch, the mutation is refused with an error naming the actual title and UID, and the process exits non-zero. This is a cheap sanity check that catches "wrong-task" mistakes from stale display IDs, and self-documents the LLM's intent in the session transcript. Absent `--as`, behavior is unchanged.
 
-### Current-task verbs vs target verbs
+### Explicit targets
 
-`done`, `blocked`, and `defer` operate **only on the current task** — the one `current_task_index` points at. They take no positional task target. To act on a different task, switch first:
+`done`, `blocked`, `defer` and `reckon` take an optional task target (`t3` or a uid). With a target they act on that task and leave `current_task_index` alone; without one they act on the current task.
 
 ```bash
-wpl switch t3 && wpl done
+wpl done t3                          # side task finished; t1 stays current
+wpl blocked t4 waiting on review     # leading tN/uid is the target, the rest is the reason
+wpl defer t5 --reason "needs input"
+wpl reckon drop t6
 ```
 
-Typing `wpl done t3` (or `blocked t3` / `defer t3`) is rejected with a structured redirect to the switch-then-verb pattern; `t3` is never silently accepted as a blocked reason.
+Prefer the explicit form whenever more than one task is in flight, or more than one agent is working the session: it needs no `switch`, so it can't take the pointer from another agent. For `blocked`, only a leading `tN` or 8-character uid counts as a target, so a reason like `on 3 tests` passes through unchanged.
+
+When the current task leaves `in_progress` (done, blocked, deferred, removed), the pointer falls back to the one other in-progress, non-dispatched task if there is exactly one; otherwise it clears.
 
 ### Status header — "no active" vs "all complete"
 
@@ -130,7 +135,7 @@ wpl add "Pull candidates into v0.jsonl" --est 45 --parent t1
 
 When to use it: project-scoped work with multiple sub-steps, a shared gate, and enough coherence that the parent is a meaningful unit of progress. When to skip it: a normal day's mixed-topic agenda — flat siblings read better than a tree of unrelated items.
 
-The `parent` field is an integer index into the task array (see `docs/state-schema.md`). There is no re-parent command today; if you need to restructure an existing flat group, remove the siblings and re-add them with `--parent`.
+The `parent` field is an integer index into the task array (see `docs/state-schema.md`). Every command that inserts, moves or removes tasks re-derives it, so sub-tasks stay attached; removing a parent makes its children top-level. There is no re-parent command today; if you need to restructure an existing flat group, remove the siblings and re-add them with `--parent`.
 
 All mutating commands:
 1. Read and validate `current-session.json`
@@ -189,7 +194,7 @@ A `PostToolUse` plugin hook (`bin/post-tool-use-hook.sh`) provides a secondary f
 - If target is `pending`, sets it to `in_progress` with `started_at`
 - **Auto-pauses** the previous `in_progress` task (sets it back to `pending`)
 - Use `--no-pause` to keep the previous task `in_progress` (for parallel/dispatched work)
-- Switching to a dispatched task (without `--no-pause`) **reclaims** it — clears the `dispatched` flag
+- Switching to a dispatched task **reclaims** it — clears the `dispatched` flag. `--no-pause` only affects the previous task
 
 ### rename
 
@@ -226,5 +231,8 @@ When tasks are dispatched to separate tmux panes via `/workplanner:dispatch`:
 - `/workplanner:pickup` and `/workplanner:dispatch` should call `dispatch` on the target task
 - Any session can use `wpl` (or `~/.workplanner/bin/wpl`) to update task state (the wrapper self-heals on every run)
 - `done` warns when completing a dispatched task (another session may still be working on it)
-- `switch` to a dispatched task reclaims it (clears the flag); use `--no-pause` to keep it dispatched
-- `transition.py` uses atomic writes (tmp → mv) which prevents file corruption but not logical races — coordinate through the main session to avoid conflicting state changes
+- `switch` to a dispatched task reclaims it (clears the flag), with or without `--no-pause`
+- Each `wpl` invocation holds an exclusive per-profile lock (`.wpl.lock`) from load to save, so concurrent agents can't overwrite each other's changes. A command that can't get the lock within 10s fails with a retryable error
+- Agents should name tasks explicitly (`wpl done t3`) rather than `switch` + `done`: the current-task pointer is shared, so switching moves it for every agent
+- Every mutation is appended to `mutations.jsonl` in the profile dir (timestamp, argv, pid/ppid, optional `$WPL_AGENT`, affected tasks), so conflicting changes can be traced afterwards
+- `undo` is still global: it restores the last whole-session snapshot, whichever agent wrote it

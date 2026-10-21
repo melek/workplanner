@@ -16,6 +16,12 @@ Start or resume the workday. Routes automatically based on session state.
 **Triage framework:** `${CLAUDE_PLUGIN_ROOT}/docs/triage-framework.md`
 **State schema:** `${CLAUDE_PLUGIN_ROOT}/docs/state-schema.md`
 
+## What workplanner is
+
+In this skill, **profile** always means a *workplanner profile*: a directory at `~/.workplanner/profiles/<name>/` holding one life context's planning state. It is not the user's identity, an IDE profile, or a global instruction file such as `CLAUDE.md`. When the user says "do X at profile level", they mean that directory. Each profile has `config.json` (settings and integrations), `session/current-session.json` (today's tasks; the single source of truth), `backlog.json`, `handoffs/`, `briefings/`, `undo.jsonl` and `mutations.jsonl`. The profile is chosen per invocation from the cwd (see `docs/profiles.md`).
+
+The inbox runbooks are prose specs you follow, not code. The documented extension points are `config.json` fields (`docs/state-schema.md`) and a profile's optional `runbook_addenda` file, which overrides the base runbooks for that profile only. Put profile-specific rules there, not in a global instruction file and not in an ad-hoc file the next session won't know to read.
+
 ## Profile resolution
 
 Before any file reads / writes that reference profile state, resolve the concrete profile root **once** and reuse it as `PROFILE_ROOT`. Do not hardcode `~/.workplanner/profiles/active/…` — the `active` symlink is no longer the source of truth:
@@ -98,6 +104,7 @@ The pre-flight verifies the integrations the user's profile actually uses. Do **
 1. Inspect the active profile's `config.json` to enumerate the integrations the morning assembly will touch (e.g. project-management, messaging, email, calendar, organizational-context). Each declared integration corresponds to one or more runbooks in `docs/inbox-runbooks.md`.
 2. For each integration, load the tool schemas needed to exercise it (via `ToolSearch` with whatever selectors match the user's available MCPs), then perform a minimal round-trip that exercises auth and basic reachability — the cheapest call available that proves the integration is usable.
 3. Record the result as `✓` or `✗ (reason)` per integration. Failures are non-blocking; runbooks already handle graceful degradation.
+4. If `config.runbook_addenda` is set, read `$PROFILE_ROOT/<runbook_addenda>`. Its rules override the matching steps in `docs/inbox-runbooks.md` for this profile; apply them at those steps for the rest of assembly. If the file is missing, report `runbook addenda: ✗ (not found)` and continue with the base runbooks.
 
 ### Report
 
@@ -438,7 +445,7 @@ Default when assembly is complete and no args. Display concisely:
 
 ```
 ▶ t2 — API integration review (~2h, 45m elapsed)
-Done: 1/7 │ ~4h25m left │ EOD: 18:00 │ Buffer: OK
+Done: 1/7 │ Budget: ~4h25m │ EOD: 18:00 │ Buffer: OK
 ```
 
 ## Task Transitions During the Day
@@ -446,8 +453,10 @@ Done: 1/7 │ ~4h25m left │ EOD: 18:00 │ Buffer: OK
 Use `wpl` (or `~/.workplanner/bin/wpl` if not on PATH) for all task state changes:
 
 ```bash
-wpl done
+wpl done                          # the current task
+wpl done t3                       # a named task; leaves the current task alone
 wpl blocked "waiting on API access"
+wpl blocked t4 "waiting on review"
 wpl defer
 wpl defer --until friday          # defer to backlog with target date
 wpl add "Review PR #4521" --est 30

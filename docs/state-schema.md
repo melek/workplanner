@@ -116,6 +116,8 @@ Created during first-run setup. Persists across sessions.
 | `timezone` | `string` | yes | IANA timezone identifier, e.g. `"Europe/Paris"`. Used by `transition.py` (`local_today()`) and morning assembly to anchor all date comparisons to the user's local calendar date. |
 | `eod_target` | `string` (HH:MM) | yes | Default end-of-day target time. |
 | `dashboard_pane` | `string` enum | no | `"auto"` \| `"always"` \| `"never"`. Controls whether `/start` spawns a tmux dashboard pane. `"auto"` (default): spawn when `$TMUX` is set. `"never"`: never spawn. `"always"`: attempt spawn regardless of `$TMUX`. |
+| `dispatch.permission_mode` | `string` enum | no | `--permission-mode` for sessions launched by `/workplanner:dispatch`: `"plan"` (default), `"default"`, `"acceptEdits"`, `"bypassPermissions"`. A `--mode` argument to the skill overrides it. Never inherited from the parent session. |
+| `runbook_addenda` | `string` (path) | no | Profile-scoped overrides to the inbox runbooks, as a markdown file. Path is relative to the profile directory (e.g. `"runbook_addenda.md"`). `/start` reads it during pre-flight and applies its rules on top of `docs/inbox-runbooks.md`. Absent = base runbooks only. |
 | `protected_blocks` | `array` | no | Time blocks that should not be scheduled over. |
 | `protected_blocks[].label` | `string` | yes | Display name for the block. |
 | `protected_blocks[].start` | `string` (HH:MM) | yes | Block start time. |

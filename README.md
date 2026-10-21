@@ -85,11 +85,11 @@ A tmux pane shows live task progress:
  t1  API review            25m  done
  t2  Classifier tuning   14m/30m  active
  t3  Team channel reply     ~15m
- -- 10:00-12:00 Animal care --
+ -- 12:00-13:00 Lunch --
  t4  Benchmark analysis     ~1h
  t5  Weekly check-in       ~30m
 ------------------------------
- Done: 1/5  |  ~2h15m left
+ Done: 1/5  |  Budget: ~2h15m
  EOD: 17:00 |  Buffer: OK
 ```
 

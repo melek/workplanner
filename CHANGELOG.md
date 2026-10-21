@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+- **`dispatch.permission_mode` config and `--mode` argument for `/workplanner:dispatch`** (issue #51). Plan mode stays the default; a profile or a single dispatch can choose `default`, `acceptEdits` or `bypassPermissions`. The parent's mode is deliberately not inherited. The confirmation line names the mode used.
+- **`runbook_addenda` config field** (issue #49). A profile can point at a markdown file of overrides to the base inbox runbooks; `/start` reads it during pre-flight. The start skill also opens with a short "What workplanner is" section that pins down what *profile* means and where the extension points are.
+
+### Changed
+
+- **EOD drafts from task state, not memory** (issue #52). The handoff trajectory and the check-in draft now read each task's `notes`, `url`, `ref` and `original_title` from `wpl --format json status`, so the report keeps its detail after context compaction or when another session runs EOD. `original_title` is now included in the JSON task record when set.
+- **"Budget" replaces "left"** (issue #50). The dashboard summary, the `wpl` status line and mutation confirmations said `~90m left` next to an EOD clock time, which reads as wall-clock time. It is the summed estimate of unfinished tasks, now labelled `Budget: ~90m`. The budget-shortfall alert reads `~2h of tasks, 1h30m until EOD`.
+- **Closed sessions render as between-days** (issue #48). After `/eod`, the dashboard header shows `CLOSED`, and the EOD/buffer line and alerts give way to a carry-over count and `Session closed [N days ago] — next: /workplanner:start`.
+
+- **`done`, `blocked`, `defer` and `reckon` take an explicit target** (issue #54). `wpl done t3` acts on t3 and leaves the current-task pointer alone. Finishing a side task used to take switch → done → switch, and two agents switching took the pointer from each other. Reverses the "current task only" redirect from #18 (finding 5): `wpl done t3` now does what it says instead of erroring. For `blocked`, a leading `tN`/uid is the target and the remaining words are the reason. When the current task leaves `in_progress`, the pointer falls back to the one other in-progress, non-dispatched task, if there is exactly one.
+
+### Fixed
+
+- **Protected blocks stay where they happened** (issue #2). A block that has ended is now placed by recorded task start times instead of a projection from the current time, so it no longer drifts down the list as the day goes on. Several blocks landing on the same row all render (one used to overwrite the other), and a block landing on a sub-task moves to the next top-level row instead of disappearing. Regression suite: `bin/test_dashboard.py`.
+- **The `wpl` wrapper survives plugin upgrades.** `~/.workplanner/bin/wpl` hardcodes the versioned plugin path, and Claude Code prunes old version directories, so after an upgrade the wrapper pointed at a deleted file until the next `/start`. The SessionStart hook now runs the current version's `transition.py` directly, which rewrites the wrapper, so the first session after an upgrade repairs it. Regression check: `bin/test_upgrade_wrapper.py`.
+- **Tests no longer touch machine-global state.** With `WPL_ROOT` overridden, `transition.py` used to repoint the global `/tmp/wp` legacy symlinks at the throwaway root, and on machines with a leftover `~/work-planning/` it ran the one-time legacy migration into every fresh root (why `test_profile_resolution` T9 failed on some machines). Both now run only for the default root.
+- **Concurrent `wpl` processes no longer lose updates** (issue #54). Each invocation holds an exclusive per-profile `flock` (`.wpl.lock`) across load → mutate → save. Before, 12 parallel `wpl add` calls kept 6 tasks; now they keep all 12. Every mutation is also appended to `mutations.jsonl` (argv, pid/ppid, optional `$WPL_AGENT`, affected tasks) so contention can be traced. `undo` is still a global snapshot stack; per-agent undo is left for a follow-up. Regression suite: `bin/test_issue_54.py`.
+
+- **Sub-tasks stay attached to their parent across list mutations** (issues #53, #55). `parent` is a positional index, and only `add` tried to maintain it — with a comparison that crashed on an explicit `parent: null`. `move`, `remove`, `backlog --from`, `backlog --promote` and `reckon drop` left it stale, so children pointed at the wrong task or at themselves. All six now share `parent_refs()` / `reindex_parents()`, which capture parents as object references before the mutation and re-derive indices after. Removing a parent makes its children top-level. Regression suite: `bin/test_issue_55.py`.
+- **`switch` always reclaims a dispatched task** (issue #47). `--no-pause` used to mean both "keep the previous task running" and "leave the target dispatched", so there was no way to reclaim a dispatched task while keeping another one in progress. It now governs only the previous task.
+
 ## 1.0.0-beta.5
 
 Methodology-reach release — four merged PRs (#34, #36/#37/#38, this) across issues #33, #35, #40, focused on closing the gap between the plugin's engine capabilities and the skill prose that teaches them to the LLM.

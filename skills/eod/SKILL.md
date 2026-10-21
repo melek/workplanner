@@ -55,14 +55,14 @@ When deferring, **prompt for a reason** — "waiting on legal", "underspecified"
 Let the user answer for all at once (free text, e.g. "t2 done, t5 defer — waiting on legal, t6 backlog friday"). Parse and apply each via transition CLI:
 
 ```bash
-wpl done
-wpl switch t5
-wpl defer --reason "waiting on legal"
-wpl switch t6
-wpl backlog --from-current --target friday   # sends to backlog with target date
+wpl done t2
+wpl defer t5 --reason "waiting on legal"
+wpl backlog --from t6 --target friday   # sends to backlog with target date
 ```
 
-**Backlog option:** When the user says "backlog" for a task, optionally with a date (e.g., "backlog friday", "backlog 2026-04-01"), move it to the backlog file instead of deferring. Use `--from-current` or `--from t{N}` with `--target` if a date is given. This is for work that doesn't belong on tomorrow's agenda but needs to surface later.
+Name each task explicitly — no `switch` needed, and the current-task pointer isn't disturbed between commands.
+
+**Backlog option:** When the user says "backlog" for a task, optionally with a date (e.g., "backlog friday", "backlog 2026-04-01"), move it to the backlog file instead of deferring. Use `--from t{N}` (or `--from-current`) with `--target` if a date is given. This is for work that doesn't belong on tomorrow's agenda but needs to surface later.
 
 **Deferral reckoning:** If `wpl defer` exits with code 2, the task has hit its deferral threshold (default: 3x). The CLI already printed the reckoning prompt (and will surface any prior `defer_reason` inline). Read the user's choice and apply via `wpl reckon <choice> [--date <date>] [--reason "..."]`. Options: `b` (break down — defer, then help decompose), `d` (delegate), `x` (drop), `t` (timebox to backlog, requires `--date`), `k` (keep deferring).
 
@@ -76,8 +76,10 @@ This is the load-bearing artifact. Write (or update) the session's contribution 
 
 Tomorrow's `/start` Step 0.25 reads this file to carry decisions, defer reasons, and context forward. Multiple sessions (dispatched tmux panes, multiple Claude instances) can each contribute; `handoff.py` merges by section and by session ID so writers never clobber each other.
 
+**Draft from task state, not memory.** Before writing any section, read each task's `notes`, `url`, `ref` and `original_title` from the session JSON (`wpl --format json status`). That detail survives context compaction, resumed sessions and dispatched panes; your recollection of the day does not. Prefer it over restating the title, and include the link when a task has one. Fall back to the title alone only when the task carries nothing more.
+
 **Sections this session writes:**
-- **Session trajectory** — high-level narrative of what got done, deferred, blocked. Not a minute-by-minute log; a readable "here's where the day landed" paragraph or bulleted summary.
+- **Session trajectory** — high-level narrative of what got done, deferred, blocked, built from each task's `notes`/`url` (see above). Not a minute-by-minute log; a readable "here's where the day landed" paragraph or bulleted summary.
 - **Deferred with reasons** — every task that ended the day in `deferred` or `blocked` status, with the `defer_reason` (or blocked reason from `notes`) inline. This is the field tomorrow's mini-triage pivots on.
 - **Open questions** — anything the LLM (you) noticed during the day that needs a human decision, research, or escalation but wasn't captured elsewhere.
 - **Context for tomorrow** — short, concrete pointers. "Check the deploy in #release-room first thing," "the PR #1234 discussion hit a wall — re-read before replying."
@@ -122,7 +124,7 @@ Only if `personal_sub_issue` is set in session state: compile a draft check-in c
 ```markdown
 ### Thursday, March 5 — Daily Update
 **Done:**
-- <task title> — <brief note if any>
+- <task title> — <outcome from the task's `notes`, with its `url` if set>
 **Carrying over:**
 - <task title> — <reason if blocked>
 **Sent to backlog:**
