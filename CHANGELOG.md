@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.0-beta.6
+
+Task-integrity, multi-agent-safety and dashboard release — PR #56 across issues #2, #47–#55.
 
 ### Added
 
