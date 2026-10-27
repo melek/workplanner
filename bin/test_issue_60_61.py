@@ -235,6 +235,74 @@ def test_dashboard_renders_dropped():
         assert "1 dropped" in text, f"summary should count dropped tasks:\n{text}"
 
 
+# ── #60: wpl edit ─────────────────────────────────────────────────────
+
+
+def test_edit_url_and_ref():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A", notes="keep")])
+        c.ok("edit", "t1", "--url", "https://example.com/x", "--ref", "PROJ-123")
+        t = c.tasks()[0]
+        assert t["url"] == "https://example.com/x" and t["ref"] == "PROJ-123", t
+        assert t["notes"] == "keep" and t["status"] == "pending", t
+        last = (c.profile_dir / "mutations.jsonl").read_text().splitlines()[-1]
+        assert json.loads(last)["action"] == "edit", last
+
+
+def test_append_notes_empty():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A")])
+        c.ok("edit", "t1", "--append-notes", "a")
+        assert c.tasks()[0]["notes"] == "a", c.tasks()[0]
+        c.ok("edit", "t1", "--append-notes", "b")
+        assert c.tasks()[0]["notes"] == "a | b", c.tasks()[0]
+
+
+def test_notes_replace():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A", notes="old")])
+        c.ok("edit", "t1", "--notes", "x")
+        assert c.tasks()[0]["notes"] == "x"
+
+
+def test_notes_flags_exclusive():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A")])
+        rc, out, err = c.run("edit", "t1", "--notes", "x", "--append-notes", "y")
+        assert rc != 0, (out, err)
+        assert "notes" not in c.tasks()[0]
+
+
+def test_edit_nothing():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A")])
+        rc, out, err = c.run("edit", "t1")
+        assert rc != 0 and "--notes" in err, (rc, err)
+
+
+def test_edit_done_task():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A", status="done", actual_min=4)])
+        c.ok("edit", "t1", "--url", "https://example.com/done")
+        t = c.tasks()[0]
+        assert t["status"] == "done" and t["url"] == "https://example.com/done", t
+
+
+def test_edit_est():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A")])
+        c.ok("edit", "t1", "--est", "45")
+        assert c.tasks()[0]["estimate_min"] == 45
+
+
+def test_edit_as_mismatch():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A")])
+        rc, out, err = c.run("edit", "t1", "--url", "https://example.com", "--as", "Not A")
+        assert rc != 0, (out, err)
+        assert "url" not in c.tasks()[0]
+
+
 TESTS = [
     test_done_never_started_is_null,
     test_done_started_is_int,
@@ -248,6 +316,14 @@ TESTS = [
     test_reckon_x_keeps_record,
     test_history_dropped,
     test_dashboard_renders_dropped,
+    test_edit_url_and_ref,
+    test_append_notes_empty,
+    test_notes_replace,
+    test_notes_flags_exclusive,
+    test_edit_nothing,
+    test_edit_done_task,
+    test_edit_est,
+    test_edit_as_mismatch,
 ]
 
 

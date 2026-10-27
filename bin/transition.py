@@ -1910,6 +1910,55 @@ def cmd_rename(args):
                   config=load_config(), human_line=line)
 
 
+def cmd_edit(args):
+    """Edit a task's notes, url, ref or estimate after `add` (#60).
+
+    Works on any status: adding the link where a finished task was resolved
+    is the common case. Titles go through `rename`, which keeps
+    `original_title`.
+    """
+    session = load_session()
+    target, task = parse_task_target(args.target, session)
+
+    echoed = getattr(args, "as_title", None)
+    if echoed is not None and not _title_matches(task.get("title"), echoed):
+        emit_error(
+            f"--as echoed title does not match target task. "
+            f"Expected \"{task.get('title')}\" (uid {task.get('uid')}), got \"{echoed}\".",
+            expected_title=task.get("title"),
+            expected_uid=task.get("uid"),
+            echoed=echoed,
+            tid=tid(target),
+        )
+
+    changed = []
+    if args.notes is not None:
+        task["notes"] = args.notes
+        changed.append("notes")
+    elif args.append_notes is not None:
+        existing = task.get("notes") or ""
+        task["notes"] = f"{existing} | {args.append_notes}" if existing else args.append_notes
+        changed.append("notes")
+    if args.url is not None:
+        task["url"] = args.url
+        changed.append("url")
+    if args.ref is not None:
+        task["ref"] = args.ref
+        changed.append("ref")
+    if args.est is not None:
+        task["estimate_min"] = args.est
+        changed.append("est")
+    if not changed:
+        fail("Nothing to edit. Use --notes, --append-notes, --url, --ref or --est.")
+
+    save_session(session)
+    render()
+
+    line = f"\u270e {tid(target)} edited: {', '.join(changed)}. [{remaining_summary(session)}]"
+    emit_mutation("edit", session, affected=[(target, task)],
+                  config=load_config(), human_line=line)
+
+
 def cmd_dispatch(args):
     """Mark a task as dispatched (being worked on in another session)."""
     session = load_session()
@@ -2999,6 +3048,27 @@ def build_parser():
              "(case-insensitive, whitespace-tolerant).",
     )
 
+    p_edit = sub.add_parser(
+        "edit",
+        help="Edit a task's notes, url, ref or estimate (any status). Titles: use rename.",
+    )
+    p_edit.add_argument("target", help="Task ID (t3) or uid.")
+    notes_group = p_edit.add_mutually_exclusive_group()
+    notes_group.add_argument("--notes", type=str, default=None, help="Replace the notes.")
+    notes_group.add_argument("--append-notes", dest="append_notes", type=str, default=None,
+                             help="Append to the notes, separated by ' | '.")
+    p_edit.add_argument("--url", type=str, default=None, help="Set the URL.")
+    p_edit.add_argument("--ref", type=str, default=None, help="Set the issue reference.")
+    p_edit.add_argument("--est", type=int, default=None, help="Set the estimate in minutes.")
+    p_edit.add_argument(
+        "--as",
+        dest="as_title",
+        type=str,
+        default=None,
+        help="Echo the target task's title. If provided, the CLI refuses the mutation "
+             "unless the echoed title matches (case-insensitive, whitespace-tolerant).",
+    )
+
     p_move = sub.add_parser("move", help="Reorder a task.")
     p_move.add_argument("source", help="Task to move (t3 or 0-based index).")
     p_move.add_argument("--to", type=str, required=True, help="Destination: t2, top, end, or index.")
@@ -3134,6 +3204,7 @@ DISPATCH = {
     "done": cmd_done,
     "blocked": cmd_blocked,
     "drop": cmd_drop,
+    "edit": cmd_edit,
     "defer": cmd_defer,
     "add": cmd_add,
     "remove": cmd_remove,
