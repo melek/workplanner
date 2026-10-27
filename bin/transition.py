@@ -902,6 +902,23 @@ def elapsed_minutes(started_at):
         return 0
 
 
+def measured_minutes(task):
+    """Minutes actually measured on a task, or None if it was never started.
+
+    `actual_min` records a measurement. A task closed without ever being
+    switched to has no start time, so there is nothing to measure — 0
+    would be a fabricated number that skews estimate-accuracy data (#61).
+    """
+    if not task.get("started_at"):
+        return None
+    return elapsed_minutes(task.get("started_at"))
+
+
+def fmt_actual(actual):
+    """Render actual_min for humans: '—' when unmeasured (None)."""
+    return "\u2014" if actual is None else f"{actual}m"
+
+
 def tid(index):
     """Display ID from 0-based index."""
     return f"t{index + 1}"
@@ -1221,7 +1238,7 @@ def format_task_list(session, config=None):
             elif actual is not None:
                 time_str = f"({actual}m)"
             elif est:
-                time_str = f"(~{est}m)"
+                time_str = f"(\u2014/{est}m)"
             else:
                 time_str = ""
         else:
@@ -1445,7 +1462,7 @@ def cmd_done(args):
     if task.get("dispatched"):
         print(f"warning: {tid(idx)} is dispatched to another session.", file=sys.stderr)
 
-    actual = elapsed_minutes(task.get("started_at"))
+    actual = measured_minutes(task)
     task["status"] = "done"
     task["finished_at"] = now_hhmm()
     task["actual_min"] = actual
@@ -1457,7 +1474,7 @@ def cmd_done(args):
     render()
 
     est = task.get("estimate_min", 0)
-    human = f"\u2713 {tid(idx)} done ({actual}m/{est}m est). [{remaining_summary(session)}]"
+    human = f"\u2713 {tid(idx)} done ({fmt_actual(actual)}/{est}m est). [{remaining_summary(session)}]"
     emit_mutation("done", session, affected=[(idx, task)],
                   config=load_config(), human_line=human)
 
@@ -2406,7 +2423,7 @@ def cmd_history(args):
             if source_filter and task.get("source") != source_filter:
                 continue
             actual = task.get("actual_min")
-            actual_str = f"{actual}m" if actual else "?"
+            actual_str = fmt_actual(actual)
             ref = task.get("ref") or ""
             ref_str = f"  [{ref}]" if ref else ""
             print(f"  {date}  {task['title']}  ({actual_str}){ref_str}")
