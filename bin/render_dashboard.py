@@ -140,6 +140,7 @@ STATUS_ICON = {
     "pending": "[ ]",
     "blocked": f"{CYAN}[!]{RESET}",
     "deferred": f"{CYAN}[~]{RESET}",
+    "dropped": f"{CYAN}[\u2717]{RESET}",
 }
 
 
@@ -574,6 +575,8 @@ def _task_right(t, idle_periods=None):
         return f"  {CYAN}blocked{RESET}"
     elif status == "deferred":
         return f"  {CYAN}deferred{RESET}"
+    elif status == "dropped":
+        return f"  {CYAN}dropped{RESET}"
     return ""
 
 
@@ -708,6 +711,8 @@ def render(session, config=None, idle_periods=None):
     countable = _countable_tasks(tasks)
     done_count = sum(1 for t in countable if t["status"] == "done")
     total_count = len(countable)
+    dropped_count = sum(1 for t in countable if t["status"] == "dropped")
+    dropped_str = f" \u00b7 {dropped_count} dropped" if dropped_count else ""
 
     remaining_min = sum(
         t.get("estimate_min", 0) or 0
@@ -756,14 +761,14 @@ def render(session, config=None, idle_periods=None):
     if session.get("checkpoint") == "closed":
         carrying = sum(1 for t in countable
                        if t["status"] in ("pending", "in_progress", "blocked", "deferred"))
-        lines.append(f" Done: {GREEN}{done_count}{RESET}/{total_count}"
+        lines.append(f" Done: {GREEN}{done_count}{RESET}/{total_count}{dropped_str}"
                      f"  \u2502  Carrying over: {carrying}{bl_str}")
         lines.append(f" {DIM}{_closed_label(date_str)} \u2014 next: /workplanner:start{RESET}")
         return "\n".join(lines) + "\n"
 
     # "Budget" is the summed estimate of unfinished tasks, not wall-clock
     # time; the wall-clock side is EOD and Buffer (issue #50).
-    lines.append(f" Done: {GREEN}{done_count}{RESET}/{total_count}  \u2502  Budget: ~{remaining_str}{bl_str}")
+    lines.append(f" Done: {GREEN}{done_count}{RESET}/{total_count}{dropped_str}  \u2502  Budget: ~{remaining_str}{bl_str}")
     lines.append(f" EOD: {eod}  \u2502  Buffer: {buffer_label} ({buffer_detail})")
 
     # Alerts

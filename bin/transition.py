@@ -1087,13 +1087,26 @@ def remaining_summary(session):
     return f"Budget: ~{fmt_duration(remaining)}"
 
 
+def done_summary(tasks):
+    """'Done: X/Y', plus '· N dropped' when any task was closed without doing it.
+
+    Dropped tasks stay out of the done count — they are decisions, not
+    completed work (#61) — but are shown so the total still adds up.
+    """
+    done_count = sum(1 for t in tasks if t.get("status") == "done")
+    dropped_count = sum(1 for t in tasks if t.get("status") == "dropped")
+    text = f"Done: {done_count}/{len(tasks)}"
+    if dropped_count:
+        text += f" \u00b7 {dropped_count} dropped"
+    return text
+
+
 def status_line(session, config=None):
     """Build the one-line status string."""
     tasks = session.get("tasks", [])
     idx, task = current_task(session)
     eod = session.get("eod_target", "18:00")
 
-    done_count = sum(1 for t in tasks if t["status"] == "done")
     total_count = len(tasks)
 
     remaining = sum(
@@ -1115,7 +1128,7 @@ def status_line(session, config=None):
         return (
             f"\u25b6 {tid(idx)} \u2014 {task['title']}{est_str}{dispatch_str}"
             f" | {date_str}{tz_tag}"
-            f" | Done: {done_count}/{total_count}"
+            f" | {done_summary(tasks)}"
             f" | Budget: ~{fmt_duration(remaining)}"
             f" | EOD: {eod}"
         )
@@ -1126,11 +1139,12 @@ def status_line(session, config=None):
     # deferred left over) gets a "No active task" variant with the
     # residual pending count.
     pending_count = sum(1 for t in tasks if t.get("status") == "pending")
-    if total_count and done_count == total_count:
+    closed_count = sum(1 for t in tasks if t.get("status") in ("done", "dropped"))
+    if total_count and closed_count == total_count:
         return (
             f"All tasks complete"
             f" | {date_str}{tz_tag}"
-            f" | Done: {done_count}/{total_count}"
+            f" | {done_summary(tasks)}"
             f" | EOD: {eod}"
         )
     if pending_count:
@@ -1143,7 +1157,7 @@ def status_line(session, config=None):
     return (
         f"{header}"
         f" | {date_str}{tz_tag}"
-        f" | Done: {done_count}/{total_count}"
+        f" | {done_summary(tasks)}"
         f" | Budget: ~{fmt_duration(remaining)}"
         f" | EOD: {eod}"
     )
@@ -1162,6 +1176,7 @@ STATUS_GLYPH = {
     "done":        "✓",
     "blocked":     "⚠",
     "deferred":    "↷",
+    "dropped":     "✗",
     "pending":     " ",
 }
 
@@ -1197,6 +1212,9 @@ def _task_record(idx, task):
     original_title = task.get("original_title")
     if original_title:
         record["original_title"] = original_title
+    drop_reason = task.get("drop_reason")
+    if drop_reason:
+        record["drop_reason"] = drop_reason
     return record
 
 
@@ -1241,6 +1259,8 @@ def format_task_list(session, config=None):
                 time_str = f"(\u2014/{est}m)"
             else:
                 time_str = ""
+        elif status == "dropped":
+            time_str = f"(dropped: {t.get('drop_reason')})" if t.get("drop_reason") else "(dropped)"
         else:
             time_str = f"(~{est}m)" if est else ""
 
@@ -1260,8 +1280,6 @@ def format_task_list(session, config=None):
         line = f"  [{glyph}] {tid(i)}  {uid}  {title}  {time_str}{dispatch_str}{parent_str}{src_str}".rstrip()
         lines.append(line)
 
-    done_count = sum(1 for t in tasks if t.get("status") == "done")
-    total_count = len(tasks)
     remaining = sum(
         t.get("estimate_min", 0) or 0
         for t in tasks
@@ -1269,7 +1287,7 @@ def format_task_list(session, config=None):
     )
     eod = session.get("eod_target", "18:00")
     footer = (
-        f"  Done: {done_count}/{total_count}"
+        f"  {done_summary(tasks)}"
         f" | Budget: ~{fmt_duration(remaining)}"
         f" | EOD: {eod}"
     )
@@ -1339,9 +1357,11 @@ def _status_payload(session, config=None):
         "done": records_by_status("done"),
         "blocked": records_by_status("blocked"),
         "deferred": records_by_status("deferred"),
+        "dropped": records_by_status("dropped"),
         "in_progress": records_by_status("in_progress"),
         "counts": {
             "done": done_count,
+            "dropped": sum(1 for t in tasks if t.get("status") == "dropped"),
             "total": total_count,
             "remaining_min": remaining,
         },
@@ -1507,6 +1527,52 @@ def cmd_blocked(args):
     line += f" [{remaining_summary(session)}]"
     emit_mutation("blocked", session, affected=[(idx, task)],
                   config=load_config(), human_line=line)
+
+
+def _drop_task(session, idx, reason):
+    """Close a task without doing it (#61). Keeps the task and its record.
+
+    `actual_min` is whatever was measured: elapsed time if the task was
+    started, None if it never was.
+    """
+    task = session["tasks"][idx]
+    task["actual_min"] = measured_minutes(task)
+    task["status"] = "dropped"
+    task["drop_reason"] = reason
+    task["finished_at"] = now_hhmm()
+    task.pop("dispatched", None)
+    settle_current(session)
+    return task
+
+
+def cmd_drop(args):
+    session = load_session()
+    idx, task = advance_target(session, args.target)
+    if task["status"] not in ("in_progress", "pending", "blocked"):
+        fail(f"{tid(idx)} is {task['status']}, can't drop.")
+    reason = (args.reason or "").strip()
+    if not reason:
+        fail("A reason is required: wpl drop tN --reason \"...\"")
+
+    echoed = getattr(args, "as_title", None)
+    if echoed is not None and not _title_matches(task.get("title"), echoed):
+        emit_error(
+            f"--as echoed title does not match target task. "
+            f"Expected \"{task.get('title')}\" (uid {task.get('uid')}), "
+            f"got \"{echoed}\".",
+            expected_title=task.get("title"),
+            expected_uid=task.get("uid"),
+            echoed=echoed,
+            tid=tid(idx),
+        )
+
+    _drop_task(session, idx, reason)
+    save_session(session)
+    render()
+
+    human = f"\u2717 {tid(idx)} dropped: {reason}. [{remaining_summary(session)}]"
+    emit_mutation("drop", session, affected=[(idx, task)],
+                  config=load_config(), human_line=human)
 
 
 def cmd_defer(args):
@@ -2292,23 +2358,14 @@ def cmd_reckon(args):
                       config=load_config(), human_line=human)
 
     elif choice in ("x", "drop"):
+        # Keep the task as `dropped` instead of deleting it, so the decision
+        # stays visible in the session, the handoff and history (#61).
         title = task["title"]
-        tasks = session.get("tasks", [])
-        dropped_snapshot = dict(task)
-        refs = parent_refs(tasks)
-        tasks.pop(idx)
-        reindex_parents(tasks, refs)
-        cur_idx = session.get("current_task_index")
-        if cur_idx is not None:
-            if cur_idx == idx:
-                session["current_task_index"] = None
-            elif cur_idx > idx:
-                session["current_task_index"] = cur_idx - 1
-        settle_current(session)
+        _drop_task(session, idx, prior_reason or "dropped at reckoning")
         save_session(session)
         render()
-        human = f"\u2716 {tid(idx)} dropped: \"{title}\". [{remaining_summary(session)}]"
-        emit_mutation("reckon:drop", session, affected=[(idx, dropped_snapshot)],
+        human = f"\u2717 {tid(idx)} dropped: \"{title}\". [{remaining_summary(session)}]"
+        emit_mutation("reckon:drop", session, affected=[(idx, task)],
                       config=load_config(), human_line=human)
 
     elif choice in ("t", "timebox"):
@@ -2878,6 +2935,23 @@ def build_parser():
     p_blocked.add_argument("reason", nargs="*",
                            help="Optional leading target (t3 or uid), then the blocking reason.")
 
+    p_drop = sub.add_parser(
+        "drop",
+        help="Close a task without doing it (default: the current task). Kept as 'dropped' with a reason.",
+    )
+    p_drop.add_argument("target", nargs="?", default=None,
+                        help="Task to drop (t3 or uid). Leaves the current-task pointer alone.")
+    p_drop.add_argument("--reason", type=str, required=True,
+                        help="Why no work is needed (handled elsewhere, optional, covered by someone else).")
+    p_drop.add_argument(
+        "--as",
+        dest="as_title",
+        type=str,
+        default=None,
+        help="Echo the target task's title. If provided, the CLI refuses the mutation "
+             "unless the echoed title matches (case-insensitive, whitespace-tolerant).",
+    )
+
     p_defer = sub.add_parser("defer", help="Defer a task (default: the current task).")
     p_defer.add_argument("target", nargs="?", default=None,
                          help="Task to defer (t3 or uid). Leaves the current-task pointer alone.")
@@ -3059,6 +3133,7 @@ def build_parser():
 DISPATCH = {
     "done": cmd_done,
     "blocked": cmd_blocked,
+    "drop": cmd_drop,
     "defer": cmd_defer,
     "add": cmd_add,
     "remove": cmd_remove,

@@ -140,10 +140,114 @@ def test_history_and_dashboard_tolerate_null():
         c.ok(script=RENDER)
 
 
+# ── #61 part 1: dropped outcome ──────────────────────────────────────
+
+
+def test_drop_pending():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A"), _task("bbbb0002", "B")])
+        out = c.ok("drop", "t2", "--reason", "covered elsewhere")
+        t = c.tasks()[1]
+        assert t["title"] == "B" and t["status"] == "dropped", t
+        assert t["drop_reason"] == "covered elsewhere", t
+        assert t["actual_min"] is None, t
+        assert "\u2717" in out, out
+
+
+def test_drop_requires_reason():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A")])
+        rc, out, err = c.run("drop", "t1")
+        assert rc != 0, (out, err)
+        assert c.tasks()[0]["status"] == "pending"
+
+
+def test_drop_refuses_done():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A", status="done", actual_min=5)])
+        rc, out, err = c.run("drop", "t1", "--reason", "x")
+        assert rc != 0, (out, err)
+        assert c.tasks()[0] == _task("aaaa0001", "A", status="done", actual_min=5)
+
+
+def test_drop_current_settles_pointer():
+    with Ctx() as c:
+        _write_session(c.profile_dir,
+                       [_task("aaaa0001", "A", status="in_progress", started_at=_ago(5)),
+                        _task("bbbb0002", "B")], current_index=0)
+        c.ok("drop", "--reason", "not needed")
+        s = _session(c.profile_dir)
+        assert s["current_task_index"] is None, s["current_task_index"]
+        assert isinstance(s["tasks"][0]["actual_min"], int), "started task keeps its measured time"
+
+
+def test_drop_then_undo():
+    with Ctx() as c:
+        before = [_task("aaaa0001", "A", notes="n"), _task("bbbb0002", "B")]
+        _write_session(c.profile_dir, before)
+        c.ok("drop", "t1", "--reason", "r")
+        c.ok("undo")
+        assert c.tasks() == before, c.tasks()
+
+
+def test_counts_and_complete():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A", status="done", actual_min=3),
+                                       _task("bbbb0002", "B")])
+        out = c.ok("drop", "t2", "--reason", "r")
+        assert "Done: 1/2" in out and "1 dropped" in out, out
+        status = c.ok("status")
+        assert status.startswith("All tasks complete"), status
+        payload = json.loads(c.ok("--format", "json", "status"))
+        assert payload["counts"]["dropped"] == 1, payload["counts"]
+        assert len(payload["dropped"]) == 1 and payload["dropped"][0]["drop_reason"] == "r"
+
+
+def test_reckon_x_keeps_record():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A", deferral_count=3, defer_reason="R"),
+                                       _task("bbbb0002", "B")])
+        c.ok("reckon", "x", "t1")
+        tasks = c.tasks()
+        assert len(tasks) == 2, tasks
+        assert tasks[0]["status"] == "dropped" and tasks[0]["drop_reason"] == "R", tasks[0]
+
+
+def test_history_dropped():
+    with Ctx() as c:
+        archive = c.profile_dir / "session" / "agendas" / "archive"
+        archive.mkdir(parents=True)
+        (archive / "2026-01-05.json").write_text(json.dumps({
+            "date": "2026-01-05",
+            "tasks": [_task("aaaa0001", "Skipped", status="dropped", drop_reason="r")]}))
+        out = c.ok("history", "--status", "dropped")
+        assert "Skipped" in out, out
+
+
+def test_dashboard_renders_dropped():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A", status="dropped", drop_reason="r"),
+                                       _task("bbbb0002", "B")])
+        c.ok(script=RENDER)
+        view = (c.profile_dir / "session" / "dashboard-view.txt")
+        text = view.read_text() if view.exists() else c.ok(script=RENDER)
+        assert "dropped" in text, text
+        assert "1 dropped" in text, f"summary should count dropped tasks:\n{text}"
+
+
 TESTS = [
     test_done_never_started_is_null,
     test_done_started_is_int,
     test_history_and_dashboard_tolerate_null,
+    test_drop_pending,
+    test_drop_requires_reason,
+    test_drop_refuses_done,
+    test_drop_current_settles_pointer,
+    test_drop_then_undo,
+    test_counts_and_complete,
+    test_reckon_x_keeps_record,
+    test_history_dropped,
+    test_dashboard_renders_dropped,
 ]
 
 
