@@ -21,6 +21,7 @@ INBOX_RUNBOOKS = REPO / "docs" / "inbox-runbooks.md"
 MORNING_ASSEMBLY = REPO / "docs" / "morning-assembly.md"
 TASK_TRANSITIONS = REPO / "docs" / "task-transitions.md"
 PICKUP_SKILL = REPO / "skills" / "pickup" / "SKILL.md"
+STATE_SCHEMA = REPO / "docs" / "state-schema.md"
 
 
 def _read(path):
@@ -172,9 +173,90 @@ def test_methodology_pointer_in_session_hook():
                      "session-hook: deviation-must-be-named rule")
 
 
+def test_pre_work_headline_only_in_assembly_doc():
+    """#62: morning-assembly.md must not contradict the skill's headline-only rule."""
+    text = _read(MORNING_ASSEMBLY)
+    _assert_absent(text, 'inserts a completed "Morning communication work" task',
+                   "assembly doc: synthetic pre-work task")
+    _assert_absent(text, "captured as a completed task", "assembly doc: pre-work as task")
+    _assert_contains(text, "headline", "assembly doc: pre-work headline")
+
+
+def test_closed_session_has_archive_step():
+    """#62: a closed session's route names the archive steps explicitly."""
+    text = _read(START_SKILL)
+    _assert_contains(text, "## Closed Session Handler", "start: closed-session handler")
+    section = text.split("## Closed Session Handler", 1)[1].split("\n## ", 1)[0]
+    _assert_contains(section, "archive", "start: closed handler archives the session")
+
+
+def test_stale_recovery_write_uses_replace():
+    """#59: stale-recovery handoff write is a full rewrite."""
+    _assert_contains(_read(START_SKILL), "--replace", "start: stale recovery --replace")
+
+
+def test_state_schema_task_fields():
+    """#62: the task table lists the fields live tasks carry."""
+    text = _read(STATE_SCHEMA).split("### Task object", 1)[1].split("\n### ", 1)[0]
+    for field in ("| `uid` |", "| `priority` |", "| `drop_reason` |", "| `dispatched` |"):
+        _assert_contains(text, field, f"schema: {field}")
+    _assert_contains(text, "`dropped`", "schema: dropped status")
+
+
+def test_task_transitions_document_drop_and_edit():
+    """#60/#61: drop and edit are documented."""
+    text = _read(TASK_TRANSITIONS)
+    for needle in ("### drop", "### edit", "dropped"):
+        _assert_contains(text, needle, f"transitions: {needle}")
+
+
+def test_archive_step_never_overwrites():
+    """Review fix: the shared archive step names the no-overwrite rule."""
+    text = _read(START_SKILL)
+    step5 = [l for l in text.splitlines() if l.startswith("5. Archive")][0]
+    _assert_contains(step5, "-N.json", "start: archive step no-overwrite rule")
+
+
+def test_closed_handler_sweep_not_in_future():
+    """Review fix: a same-day restart must not sweep from a future time."""
+    section = _read(START_SKILL).split("## Closed Session Handler", 1)[1].split("\n## ", 1)[0]
+    _assert_contains(section, "sweep_since", "start: closed handler sweep_since rule")
+    _assert_contains(section, "now", "start: sweep_since capped at now")
+
+
+def test_stale_recovery_mentions_dropped():
+    """Review fix: stale-recovery trajectory includes dropped tasks."""
+    text = _read(START_SKILL)
+    _assert_contains(text, "done / dropped / deferred / blocked", "start: stale trajectory covers dropped")
+
+
+def test_task_transitions_lists_new_commands():
+    """Review fix: --as, explicit-target and pointer rules include drop/edit."""
+    text = _read(TASK_TRANSITIONS)
+    _assert_contains(text, "(done, blocked, deferred, dropped, removed)", "transitions: pointer rule")
+    _assert_contains(text, "`done`, `drop`, `edit`, `rename` and `remove` accept", "transitions: --as list")
+    _assert_contains(text, "`done`, `drop`, `blocked`, `defer` and `reckon` take", "transitions: target list")
+
+
+def test_handoff_write_semantics_documented():
+    """Review fix: handoff docs describe omit-means-keep and --replace."""
+    for path in (STATE_SCHEMA, REPO / "bin" / "handoff.py"):
+        _assert_contains(_read(path), "--replace", f"{path.name}: --replace documented")
+
+
 def main():
     tests = [
         test_pre_work_no_task_insertion,
+        test_pre_work_headline_only_in_assembly_doc,
+        test_closed_session_has_archive_step,
+        test_stale_recovery_write_uses_replace,
+        test_state_schema_task_fields,
+        test_task_transitions_document_drop_and_edit,
+        test_archive_step_never_overwrites,
+        test_closed_handler_sweep_not_in_future,
+        test_stale_recovery_mentions_dropped,
+        test_task_transitions_lists_new_commands,
+        test_handoff_write_semantics_documented,
         test_carryover_has_threshold_gate,
         test_carryover_no_unconditional_prompt,
         test_calendar_fallback_gated,

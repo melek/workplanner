@@ -162,8 +162,9 @@ def main():
         tasks[1]["deferral_count"] = 3
         _write_session(profile_dir, tasks, current_index=0)
         _run(ws, env, "reckon", "x", "t2", check_exit=0)
-        titles = [t["title"] for t in _session(profile_dir)["tasks"]]
-        assert titles == ["One", "Three"], f"V9: {titles}"
+        statuses = [(t["title"], t["status"]) for t in _session(profile_dir)["tasks"]]
+        # reckon x keeps the task as `dropped` (issue #61) rather than deleting it.
+        assert statuses == [("One", "in_progress"), ("Two", "dropped"), ("Three", "pending")], f"V9: {statuses}"
         assert _session(profile_dir)["current_task_index"] == 0
         print("V9: reckon x tN drops the named task [OK]")
 

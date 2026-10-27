@@ -48,7 +48,9 @@ These tasks are still open:
 ○ t5 — Weekly check-in (pending)
 ```
 
-Ask once: "For each: done, defer (with reason?), blocked, or backlog?"
+Ask once: "For each: done, drop (no work needed — with reason), defer (with reason?), blocked, or backlog?"
+
+Use **drop** when the task was settled without doing it: handled elsewhere, judged optional, covered by someone else. `done` would count it as completed work.
 
 When deferring, **prompt for a reason** — "waiting on legal", "underspecified", "blocked on infra", etc. A one-line reason is enough; the point is to carry the "why" into tomorrow's carryover surface so the same task doesn't silently re-appear with zero context.
 
@@ -56,6 +58,7 @@ Let the user answer for all at once (free text, e.g. "t2 done, t5 defer — wait
 
 ```bash
 wpl done t2
+wpl drop t3 --reason "covered by a teammate"
 wpl defer t5 --reason "waiting on legal"
 wpl backlog --from t6 --target friday   # sends to backlog with target date
 ```
@@ -79,7 +82,7 @@ Tomorrow's `/start` Step 0.25 reads this file to carry decisions, defer reasons,
 **Draft from task state, not memory.** Before writing any section, read each task's `notes`, `url`, `ref` and `original_title` from the session JSON (`wpl --format json status`). That detail survives context compaction, resumed sessions and dispatched panes; your recollection of the day does not. Prefer it over restating the title, and include the link when a task has one. Fall back to the title alone only when the task carries nothing more.
 
 **Sections this session writes:**
-- **Session trajectory** — high-level narrative of what got done, deferred, blocked, built from each task's `notes`/`url` (see above). Not a minute-by-minute log; a readable "here's where the day landed" paragraph or bulleted summary.
+- **Session trajectory** — high-level narrative of what got done, dropped, deferred, blocked, built from each task's `notes`/`url` (see above). List dropped tasks with their `drop_reason` so the decision not to do them is on record. Not a minute-by-minute log; a readable "here's where the day landed" paragraph or bulleted summary.
 - **Deferred with reasons** — every task that ended the day in `deferred` or `blocked` status, with the `defer_reason` (or blocked reason from `notes`) inline. This is the field tomorrow's mini-triage pivots on.
 - **Open questions** — anything the LLM (you) noticed during the day that needs a human decision, research, or escalation but wasn't captured elsewhere.
 - **Context for tomorrow** — short, concrete pointers. "Check the deploy in #release-room first thing," "the PR #1234 discussion hit a wall — re-read before replying."
@@ -100,16 +103,16 @@ Tomorrow's `/start` Step 0.25 reads this file to carry decisions, defer reasons,
 
 3. Pass everything to `handoff.py write`:
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/bin/handoff.py" write \
+   python3 "${CLAUDE_PLUGIN_ROOT}/bin/handoff.py" write --replace \
      --trajectory "$TRAJECTORY_MARKDOWN" \
      --deferred-json "$DEFERRED_JSON" \
      --open-questions "$OPEN_Q_MARKDOWN" \
      --context "$CONTEXT_MARKDOWN"
    ```
 
-   Omit any flag where this session has nothing to say — the library drops empty sub-sections automatically. Do NOT pass an explicit `--session-id`; the library picks one from `$CLAUDE_SESSION_ID` → `$TMUX_PANE` → process-start-hash fallback.
+   `--replace` makes this a full rewrite of this session's contribution: a flag you leave out (because this session has nothing to say there) removes that sub-section, so a re-run clears a section that became empty. Without `--replace`, `handoff.py write` keeps sections you don't pass — that is for incremental writes during the day, not for EOD. Write all sections in this one call. Do NOT pass an explicit `--session-id`; the library picks one from `$CLAUDE_SESSION_ID` → `$TMUX_PANE` → process-start-hash fallback.
 
-**Idempotent within a session:** If `/eod` is re-run (e.g., after a fix-up), the write overwrites *this session's* sub-sections only. Other sessions' contributions are preserved.
+**Idempotent within a session:** If `/eod` is re-run (e.g., after a fix-up), the `--replace` write rewrites *this session's* sub-sections only. Other sessions' contributions are preserved.
 
 **Session-close gate:** Step 4 (close session) only fires if this handoff write succeeded. If `handoff.py write` fails, surface the error, leave the session open, and let the user retry. Set `eod_handoff_written: true` in session state on success.
 

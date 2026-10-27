@@ -75,17 +75,21 @@ Tasks do NOT have an `id` field in JSON. Display IDs (`t1`, `t2`, ...) are deriv
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `uid` | `string` (8-char hex) | yes | Stable task identifier. Survives reordering; prefer it over positional `tN` IDs when addressing tasks. Backfilled on load for older sessions. |
 | `title` | `string` | yes | Short description of the task. May be revised via `wpl rename` to reflect work-as-completed; the original is preserved in `original_title` on first rename. |
 | `original_title` | `string` | no | First-renamed title. Set automatically by `wpl rename` on the first rename only — repeat renames update `title` only, leaving `original_title` as the planning-phase receipt. Surfaced by `bin/handoff.py` as `(was: <original_title>)` in the deferred-with-reasons section when it differs from the current `title`. Absent on tasks that were never renamed — migration-safe. |
-| `status` | `string` | yes | Current task state: `pending`, `in_progress`, `done`, `blocked`, `deferred`. |
+| `status` | `string` | yes | Current task state: `pending`, `in_progress`, `done`, `blocked`, `deferred`, `dropped`. `dropped` means closed without doing it (`wpl drop`). |
+| `priority` | `string` | no | Triage priority from assembly: `critical`, `high`, `medium`, `low`. |
 | `estimate_min` | `integer` | yes | Estimated duration in minutes. |
-| `actual_min` | `integer \| null` | no | Actual duration in minutes. Set when task reaches `done`. |
+| `actual_min` | `integer \| null` | no | Measured duration in minutes, set when the task reaches `done` or `dropped`. `null` when the task was never started — nothing was measured. |
 | `source` | `string` | yes | Where the task originated: `carryover`, `linear`, `digest`, `slack`, `focus`, `manual`. |
 | `ref` | `string \| null` | no | Linear issue identifier (e.g. `"PROJ-456"`). |
 | `url` | `string \| null` | no | URL for the source reference. |
 | `started_at` | `string (HH:MM) \| null` | no | Time the task was started. |
 | `finished_at` | `string (HH:MM) \| null` | no | Time the task was completed. |
-| `notes` | `string \| null` | no | Free-text notes. |
+| `notes` | `string \| null` | no | Free-text notes. Set at `add` or later with `wpl edit`. |
+| `dispatched` | `boolean` | no | `true` while the task is being worked on in another session (`wpl dispatch`). Cleared by `switch`, `done` and `drop`. |
+| `drop_reason` | `string` | no | Why the task was closed without doing it. Required by `wpl drop`; set by `reckon x` from the task's `defer_reason`. |
 | `parent` | `integer \| null` | no | 0-based index of parent task for sub-task nesting. |
 | `deferral_count` | `integer` | no | Number of times this task has been deferred (persists through carryover). Default: 0. When this reaches `config.triage.deferrals.reckoning_threshold`, the system triggers a forced reckoning prompt instead of silently deferring. |
 | `defer_reason` | `string` | no | Optional human-readable explanation of *why* the task was deferred. Set via `wpl defer --reason "..."` (or `wpl reckon <choice> --reason "..."`). Persists on the task, travels across carryover (session → backlog → session), and is surfaced in reckoning prompts, `/eod` handoff doc, and `/start` carryover mini-triage. Absent on older state files — migration-safe (any consumer uses `.get()`). |
@@ -232,7 +236,7 @@ python3 bin/handoff.py read [--date YYYY-MM-DD]    # prints JSON with {path, dat
 python3 bin/handoff.py path [--date YYYY-MM-DD]    # prints the resolved path
 ```
 
-`write` is idempotent within a session-id: re-running overwrites that session's sub-sections only. Other sessions' sub-sections and unrecognised `## ...` sections (e.g., human free-text additions) are preserved verbatim.
+`write` only ever touches this session-id's sub-sections. Sections not passed are kept, so a session can write in several passes; an explicit empty value (e.g. `--context ""`) clears one; `--replace` makes the write a full rewrite of this session's sub-sections (what `/eod` uses). Other sessions' sub-sections and unrecognised `## ...` sections (e.g., human free-text additions) are preserved verbatim.
 
 ### Stale-session recovery
 
