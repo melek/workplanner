@@ -108,3 +108,4 @@ Then ask: "Ready to start, or want to adjust the approach?"
 - This skill is the local-session counterpart of `/workplanner:dispatch` (which spawns a new tmux pane)
 - The user may run this from a different Claude session than the one that ran `/workplanner:start`
 - Always use `transition.py` for state changes, never edit the JSON directly
+- To record context while working (a link to where the task was resolved, a follow-up detail), use `wpl edit tN --append-notes "..."` or `--url`. If the task turns out to need no work, close it with `wpl drop tN --reason "..."` rather than `done`

@@ -130,6 +130,22 @@ def test_eod_doc_no_auto_post():
     _assert_contains(text, "display-only", "doc: display-only posture")
 
 
+def test_eod_handoff_write_uses_replace():
+    """#59: EOD's handoff write is a full rewrite; omitted now means kept."""
+    for path, label in ((EOD_SKILL, "skill"), (EOD_DOC, "doc")):
+        text = _read(path)
+        _assert_contains(text, "--replace", f"{label}: --replace")
+        _assert_absent(text, "the library drops empty sub-sections automatically",
+                       f"{label}: stale omit-means-delete wording")
+
+
+def test_eod_covers_dropped_tasks():
+    """#61: EOD offers drop and reports dropped tasks with their reason."""
+    text = _read(EOD_SKILL)
+    _assert_contains(text, "wpl drop", "skill: drop option")
+    _assert_contains(text, "drop_reason", "skill: dropped tasks in trajectory")
+
+
 def main():
     tests = [
         test_eod_skill_step_order,
@@ -140,6 +156,8 @@ def main():
         test_start_skill_uses_eod_handoff_written,
         test_eod_doc_step_order,
         test_eod_doc_no_auto_post,
+        test_eod_handoff_write_uses_replace,
+        test_eod_covers_dropped_tasks,
     ]
     failures = 0
     for t in tests:

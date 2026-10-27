@@ -17,7 +17,7 @@ Checkpoint progression: `initialized` → `inbox_swept` → `focus_loaded` → `
 3. **Graceful degradation** — Any source can fail without blocking assembly
 4. **Abstracted from user** — Collection runs autonomously; user sees only the finished agenda
 5. **Since-last-EOD horizon** — All sweeps use the previous session's close time as the cutoff
-6. **Pre-work recognition** — Work done before `/start` (Slack, team blogs) is captured as a completed task, not ignored
+6. **Pre-work recognition** — Work done before `/start` (Slack, team blogs) is surfaced as a headline, not ignored — and not padded into the task list
 
 ---
 
@@ -48,7 +48,7 @@ If the file is absent (fresh install, or yesterday's `/eod` skipped), log "No ha
 
 ### Step 0.5: Pre-work activity scan
 
-Before the inbox sweep, check if the user already did work this morning (Slack replies, blog comments, etc.). Uses `config.triage.pre_work` settings. If activity exceeds `min_minutes_for_task` (default: 5), inserts a completed "Morning communication work" task at position 0. See `skills/start/SKILL.md` for full procedure.
+Before the inbox sweep, check if the user already did work this morning (Slack replies, blog comments, etc.). Uses `config.triage.pre_work` settings. Any activity found becomes a single headline line ("Pre-work: …"); no synthetic task is inserted. See `skills/start/SKILL.md` for the full procedure.
 
 ### Runbook execution order
 

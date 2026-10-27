@@ -11,8 +11,12 @@ pending ──→ in_progress ──→ done
                 │
                 ├──→ blocked
                 │
-                └──→ deferred
+                ├──→ deferred
+                │
+                └──→ dropped
 ```
+
+`dropped` (closed without doing it) is reachable from `pending`, `in_progress` and `blocked`.
 
 Only one task should be `in_progress` at a time (except during parallel/dispatched work with `--no-pause`). `current_task_index` in the session JSON points to the active task.
 
@@ -27,6 +31,7 @@ The `wpl` wrapper lives at `~/.workplanner/bin/wpl` and forwards to `bin/transit
 | Command | Args | Effect |
 |---------|------|--------|
 | `done` | `[target] [--as "<title>"]` | Mark a task done — the named one, or the current task if omitted (see "Explicit targets" below) |
+| `drop` | `[target] --reason "..." [--as "<title>"]` | Close a task without doing it (handled elsewhere, optional, covered by someone else). Kept as `dropped` with its reason |
 | `blocked` | `[target] [reason...]` | Mark a task blocked; a leading `tN`/uid names the task, the remaining words are the free-text reason |
 | `defer` | `[target] [--until DATE] [--reason ...]` | Defer a task (named or current); with `--until` sends to backlog with target date |
 | `add` | `<title> [flags]` | Add a new task (see flags below) |
@@ -35,6 +40,7 @@ The `wpl` wrapper lives at `~/.workplanner/bin/wpl` and forwards to `bin/transit
 | `dispatch` | `<target>` | Mark a task as dispatched to another session |
 | `remove` | `<target> [--as "<title>"]` | Remove a task entirely |
 | `rename` | `<target> <new-title...> [--as "<old-title>"]` | Update a task's title; preserves the original in `original_title` on first rename |
+| `edit` | `<target> [--notes TEXT \| --append-notes TEXT] [--url URL] [--ref REF] [--est MIN] [--as "<title>"]` | Edit a task's notes, URL, reference or estimate after `add`, at any status |
 | `status` | — | Print one-line status summary and full compact task list |
 
 ### Global flags
@@ -157,7 +163,7 @@ A `PostToolUse` plugin hook (`bin/post-tool-use-hook.sh`) provides a secondary f
 
 ### done
 
-- Sets `status: "done"`, `finished_at`, `actual_min` (elapsed since `started_at`)
+- Sets `status: "done"`, `finished_at`, `actual_min` (elapsed since `started_at`; `null` if the task was never started — nothing was measured)
 - Advances `current_task_index` to next pending task
 - If no pending tasks remain, sets `current_task_index: null`
 
@@ -166,6 +172,22 @@ A `PostToolUse` plugin hook (`bin/post-tool-use-hook.sh`) provides a secondary f
 - Sets `status: "blocked"`
 - Appends reason to `notes` if provided
 - Advances to next pending task
+
+### drop
+
+- Sets `status: "dropped"`, `drop_reason`, `finished_at`, and `actual_min` (elapsed if the task was started, otherwise `null`)
+- `--reason` is required: a dropped task is a decision, and the reason is what makes it readable in the handoff and history
+- Allowed from `pending`, `in_progress` and `blocked`; refused for `done`, `deferred` and `dropped`
+- Counted separately from done: the status line reads `Done: 7/11 · 2 dropped`, and "All tasks complete" means every task is `done` or `dropped`
+- Dropped tasks are not carried over; they stay in the session and in archived history
+- `reckon x` drops the task the same way (reason: the task's `defer_reason`, or "dropped at reckoning") instead of deleting it
+
+### edit
+
+- Sets any of `notes` (`--notes` replaces, `--append-notes` appends with ` | `), `url`, `ref`, `estimate_min`
+- Works at any status — adding the link where a finished task was resolved is the common case
+- Titles go through `rename`, which keeps `original_title`
+- Use it instead of editing the session JSON by hand during the day; it goes through the lock, undo snapshot and mutation log
 
 ### defer
 

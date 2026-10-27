@@ -125,7 +125,7 @@ if session missing             → Morning Assembly
 if session.date ≠ local_today  → Stale Session Handler → Morning Assembly
 if checkpoint < assembly_complete → Resume Morning Assembly (skip completed steps)
 if checkpoint = assembly_complete → Status Check
-if checkpoint = closed         → "Yesterday's session is closed. Starting fresh." → Morning Assembly
+if checkpoint = closed         → Closed Session Handler → Morning Assembly
 ```
 
 ### Workspace Association
@@ -259,6 +259,7 @@ Triggered when `current-session.json` exists but `date` ≠ today.
      python3 "${CLAUDE_PLUGIN_ROOT}/bin/handoff.py" write \
        --session-id "stale-recovery-$STALE_DATE" \
        --date "$STALE_DATE" \
+       --replace \
        --trajectory "<done / deferred / blocked summary + notes + scope decisions>" \
        --deferred-json '[{"title":"...","uid":"...","reason":"..."}]' \
        --open-questions "<open threads noted in the session>" \
@@ -274,13 +275,17 @@ Triggered when `current-session.json` exists but `date` ≠ today.
 
 3. **No retroactive external posting.** The backfilled handoff from step 2 is the recovery artifact, period. Do not draft or prompt to post a retroactive check-in to any external system (project-management, messaging, or otherwise) on the user's behalf — a missed day that rolls over is a signal to move on, not to retroactively catch up public channels. If the user wants to post something about yesterday, they'll do it themselves.
 
-4. Extract `deferred` and `blocked` tasks as carryover candidates. Prefer the handoff file (via `handoff.py read`) over the raw session JSON when both are available — a scope pivot captured in the handoff overrides the stale session's original task titles and reasons.
+4. Extract `deferred` and `blocked` tasks as carryover candidates. `done` and `dropped` tasks are not carried over. Prefer the handoff file (via `handoff.py read`) over the raw session JSON when both are available — a scope pivot captured in the handoff overrides the stale session's original task titles and reasons.
 5. Archive: move the session to `$PROFILE_ROOT/session/agendas/archive/{date}.json`.
 6. Archive the agenda markdown too if it exists.
 7. Compute `sweep_since` from the stale session's `eod_target` on its `date`.
 8. Proceed to Morning Assembly with carryover list and `sweep_since`.
 
 Why this exists: missed EODs otherwise cause stale task framings to carry forward unchanged for multiple days. The backfilled handoff captures scope pivots, decisions, and context that session JSON alone cannot reconstruct the morning after — and because it lands at the same path as a normal-path handoff, Step 0.25 finds it the next morning without any special-case logic.
+
+## Closed Session Handler
+
+Triggered when the session's `checkpoint` is `closed` (`/eod` already ran) but its date is still today, so the stale handler didn't fire. Say "Today's session is closed. Starting fresh." and run the Stale Session Handler's steps 4–8 on it: extract carryover, archive the session JSON and agenda markdown, compute `sweep_since`, proceed to Morning Assembly. Skip steps 1–3: the handoff was written at EOD (`eod_handoff_written: true`), so there is nothing to backfill or post. If `archive/{date}.json` already exists, archive to `archive/{date}-2.json` rather than overwriting it.
 
 ## Morning Assembly
 
