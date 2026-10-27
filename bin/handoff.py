@@ -289,6 +289,7 @@ def write_handoff(
     open_questions=None,
     context=None,
     target_date=None,
+    replace=False,
 ):
     """Merge-by-section write for today's handoff.
 
@@ -297,11 +298,14 @@ def write_handoff(
     sections (outside SECTIONS) are also preserved — a human could drop a
     free-text note at the end and it would survive future EOD writes.
 
-    Any of trajectory / deferred / open_questions / context that are None
-    or empty are treated as "this session has no contribution to that
-    section this invocation" — the session's existing sub-section (if any)
-    is removed. If the whole section would become empty across all sessions,
-    the section is dropped entirely.
+    A section argument of None means "not part of this write": the
+    session's existing sub-section (if any) is kept, so a session can write
+    its handoff in several passes. An explicit empty value ("" or
+    whitespace) removes the session's sub-section. With replace=True, None
+    is treated like empty — the write is a full rewrite of this session's
+    contribution (what /eod uses, so a re-run can clear a section). If a
+    section ends up with no sub-sections across all sessions, it is dropped
+    entirely.
 
     `deferred` may be a list of {title, uid, reason} dicts OR a
     pre-rendered markdown string. Dicts get rendered via
@@ -319,14 +323,16 @@ def write_handoff(
         preamble = f"# Handoff — {date_str}\n\n"
 
     # Build the new contributions for this session.
+    raw = {
+        "Session trajectory": trajectory,
+        "Deferred with reasons": deferred,
+        "Open questions": open_questions,
+        "Context for tomorrow": context,
+    }
     new_contributions = {
-        "Session trajectory": _normalise_body(trajectory),
-        "Deferred with reasons": (
-            _render_deferred_body(deferred)
-            if isinstance(deferred, list) else _normalise_body(deferred)
-        ),
-        "Open questions": _normalise_body(open_questions),
-        "Context for tomorrow": _normalise_body(context),
+        name: (_render_deferred_body(value) if isinstance(value, list)
+               else _normalise_body(value))
+        for name, value in raw.items()
     }
 
     # For each known section, splice this session's sub-section in/out.
@@ -335,6 +341,8 @@ def write_handoff(
     updated_bodies = dict(bodies)
 
     for section_name in SECTIONS:
+        if raw[section_name] is None and not replace:
+            continue  # not part of this write — keep whatever is there
         sub_ids, subs, sub_preamble = _parse_subsections(bodies.get(section_name, ""))
         new_body = new_contributions[section_name]
         if new_body:
@@ -406,7 +414,7 @@ def _cmd_write(args):
         except json.JSONDecodeError as e:
             print(f"error: --deferred-json is not valid JSON: {e}", file=sys.stderr)
             sys.exit(1)
-    elif args.deferred:
+    elif args.deferred is not None:
         deferred = args.deferred
 
     sid = args.session_id or session_id()
@@ -417,6 +425,7 @@ def _cmd_write(args):
         open_questions=args.open_questions,
         context=args.context,
         target_date=args.date,
+        replace=args.replace,
     )
     print(str(path))
 
@@ -458,6 +467,9 @@ def main():
     w.add_argument("--open-questions", default=None, help="Open questions markdown body.")
     w.add_argument("--context", default=None, help="Context-for-tomorrow markdown body.")
     w.add_argument("--date", default=None, help="ISO date (YYYY-MM-DD). Default: today in profile timezone.")
+    w.add_argument("--replace", action="store_true",
+                   help="Full rewrite of this session's contribution: sections not passed are removed. "
+                        "Without it, sections not passed are kept, and an explicit empty value clears one.")
     w.set_defaults(func=_cmd_write)
 
     r = sub.add_parser("read", help="Read a handoff file and print JSON.")
