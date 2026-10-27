@@ -69,10 +69,12 @@ except Exception:
 
 lines = ["Workplanner session state (post-wpl injection):"]
 counts = s.get("counts", {})
+dropped = counts.get("dropped", 0)
 lines.append(
-    "  Done: {}/{} | ~{}m left | EOD: {}".format(
+    "  Done: {}/{}{} | ~{}m left | EOD: {}".format(
         counts.get("done", 0),
         counts.get("total", 0),
+        " \u00b7 {} dropped".format(dropped) if dropped else "",
         counts.get("remaining_min", 0),
         s.get("eod_target", "?"),
     )
@@ -96,6 +98,7 @@ glyphs = {
     "done":        "✓",
     "blocked":     "⚠",
     "deferred":    "↷",
+    "dropped":     "✗",
     "pending":     " ",
 }
 

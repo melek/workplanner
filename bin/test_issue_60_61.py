@@ -25,6 +25,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 TRANSITION = REPO / "bin" / "transition.py"
 RENDER = REPO / "bin" / "render_dashboard.py"
+HOOK = REPO / "bin" / "post-tool-use-hook.sh"
 
 
 def _run(cwd, env, *args, script=TRANSITION):
@@ -303,6 +304,53 @@ def test_edit_as_mismatch():
         assert "url" not in c.tasks()[0]
 
 
+# ── Review fixes ──────────────────────────────────────────────────────
+
+
+def test_hook_shows_dropped():
+    """The post-wpl context injection must not show a dropped task as open."""
+    if not shutil.which("jq"):
+        print("     (skipped: jq not installed)")
+        return
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A", status="dropped", drop_reason="r"),
+                                       _task("bbbb0002", "B")])
+        wrapper = Path(c.base) / "wpl-bin"
+        wrapper.write_text(f"#!/bin/sh\nexec {sys.executable} {TRANSITION} \"$@\"\n")
+        wrapper.chmod(0o755)
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "wpl status"}})
+        proc = subprocess.run(["bash", str(HOOK)], input=payload, cwd=c.base,
+                              env={**os.environ, **c.env, "WPL_BIN": str(wrapper)},
+                              capture_output=True, text=True)
+        out = proc.stdout
+        assert "[\u2717] t1" in out, f"dropped task shown as open:\n{out}"
+        assert "1 dropped" in out, f"counts line should mention dropped:\n{out}"
+
+
+def test_parent_with_dropped_children_completes():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("pppp0001", "P"),
+                                       _task("cccc0002", "c1", status="dropped", drop_reason="r", parent=0),
+                                       _task("cccc0003", "c2", status="done", actual_min=3, parent=0)])
+        out = c.ok(script=RENDER)
+        first = [l for l in out.splitlines() if " P" in l][0]
+        assert "[x]" in first, f"parent should render complete:\n{out}"
+
+
+def test_reckon_refuses_closed_task():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A", status="done", actual_min=30,
+                                             started_at=_ago(300), deferral_count=3),
+                                       _task("bbbb0002", "B", status="dropped", drop_reason="r",
+                                             deferral_count=3)])
+        rc, out, err = c.run("reckon", "x", "t1")
+        assert rc != 0, (out, err)
+        assert c.tasks()[0]["actual_min"] == 30 and c.tasks()[0]["status"] == "done", c.tasks()[0]
+        rc, out, err = c.run("reckon", "k", "t2")
+        assert rc != 0, (out, err)
+        assert c.tasks()[1]["status"] == "dropped", c.tasks()[1]
+
+
 TESTS = [
     test_done_never_started_is_null,
     test_done_started_is_int,
@@ -324,6 +372,9 @@ TESTS = [
     test_edit_done_task,
     test_edit_est,
     test_edit_as_mismatch,
+    test_hook_shows_dropped,
+    test_parent_with_dropped_children_completes,
+    test_reckon_refuses_closed_task,
 ]
 
 

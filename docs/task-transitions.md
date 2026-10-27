@@ -61,11 +61,11 @@ consulted. See `docs/profiles.md` for the full flow and migration notes.
 
 ### `--as "<title>"` echo check
 
-`done` and `remove` accept an optional `--as "<title>"` argument. When present, the CLI compares the echoed title to the target task's actual title (case-insensitive, whitespace-tolerant). On mismatch, the mutation is refused with an error naming the actual title and UID, and the process exits non-zero. This is a cheap sanity check that catches "wrong-task" mistakes from stale display IDs, and self-documents the LLM's intent in the session transcript. Absent `--as`, behavior is unchanged.
+`done`, `drop`, `edit`, `rename` and `remove` accept an optional `--as "<title>"` argument. When present, the CLI compares the echoed title to the target task's actual title (case-insensitive, whitespace-tolerant). On mismatch, the mutation is refused with an error naming the actual title and UID, and the process exits non-zero. This is a cheap sanity check that catches "wrong-task" mistakes from stale display IDs, and self-documents the LLM's intent in the session transcript. Absent `--as`, behavior is unchanged.
 
 ### Explicit targets
 
-`done`, `blocked`, `defer` and `reckon` take an optional task target (`t3` or a uid). With a target they act on that task and leave `current_task_index` alone; without one they act on the current task.
+`done`, `drop`, `blocked`, `defer` and `reckon` take an optional task target (`t3` or a uid). With a target they act on that task and leave `current_task_index` alone; without one they act on the current task.
 
 ```bash
 wpl done t3                          # side task finished; t1 stays current
@@ -76,7 +76,7 @@ wpl reckon drop t6
 
 Prefer the explicit form whenever more than one task is in flight, or more than one agent is working the session: it needs no `switch`, so it can't take the pointer from another agent. For `blocked`, only a leading `tN` or 8-character uid counts as a target, so a reason like `on 3 tests` passes through unchanged.
 
-When the current task leaves `in_progress` (done, blocked, deferred, removed), the pointer falls back to the one other in-progress, non-dispatched task if there is exactly one; otherwise it clears.
+When the current task leaves `in_progress` (done, blocked, deferred, dropped, removed), the pointer falls back to the one other in-progress, non-dispatched task if there is exactly one; otherwise it clears.
 
 ### Status header — "no active" vs "all complete"
 

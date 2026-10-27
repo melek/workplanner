@@ -28,8 +28,10 @@ CLI surface (used by skills):
     # Print the path for today's handoff (doesn't create it)
     python3 handoff.py path [--date YYYY-MM-DD]
 
-The `write` command is idempotent within a session-id: re-running it
-overwrites that session's sub-sections and leaves other sessions alone.
+The `write` command only touches this session-id's sub-sections. Sections
+not passed are kept (incremental writes); an explicit empty value clears
+one; `--replace` rewrites this session's contribution in full (what /eod
+uses, so a re-run can clear a section). Other sessions are left alone.
 
 Python 3.9+ stdlib only.
 """

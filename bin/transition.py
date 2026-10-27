@@ -2384,6 +2384,8 @@ def cmd_reckon(args):
     """Apply a reckoning decision after deferral threshold (current or named task)."""
     session = load_session()
     idx, task = advance_target(session, args.target)
+    if task["status"] not in ("in_progress", "pending", "blocked"):
+        fail(f"{tid(idx)} is {task['status']}, can't reckon.")
 
     # If the user passed a --reason, attach/update it now so it surfaces in the
     # post-reckon output line and travels with the task (whether it stays in

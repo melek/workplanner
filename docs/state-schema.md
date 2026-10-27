@@ -236,7 +236,7 @@ python3 bin/handoff.py read [--date YYYY-MM-DD]    # prints JSON with {path, dat
 python3 bin/handoff.py path [--date YYYY-MM-DD]    # prints the resolved path
 ```
 
-`write` is idempotent within a session-id: re-running overwrites that session's sub-sections only. Other sessions' sub-sections and unrecognised `## ...` sections (e.g., human free-text additions) are preserved verbatim.
+`write` only ever touches this session-id's sub-sections. Sections not passed are kept, so a session can write in several passes; an explicit empty value (e.g. `--context ""`) clears one; `--replace` makes the write a full rewrite of this session's sub-sections (what `/eod` uses). Other sessions' sub-sections and unrecognised `## ...` sections (e.g., human free-text additions) are preserved verbatim.
 
 ### Stale-session recovery
 

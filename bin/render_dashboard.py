@@ -683,7 +683,7 @@ def render(session, config=None, idle_periods=None):
 
         if has_children:
             children = parent_children[tid]
-            all_done = all(c["status"] == "done" for c in children)
+            all_done = all(c["status"] in ("done", "dropped") for c in children)
             any_in_progress = any(c["status"] == "in_progress" for c in children)
             if all_done:
                 icon = STATUS_ICON["done"]

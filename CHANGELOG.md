@@ -6,7 +6,7 @@ Task-outcome and handoff release — issues #59–#62.
 
 ### Added
 
-- **`wpl drop <task> --reason "..."`** (issue #61). Closes a task without doing it — handled elsewhere, judged optional, covered by someone else — as a new `dropped` status with a required `drop_reason`. Dropped tasks stay in the session and in history, count separately from done (`Done: 7/11 · 2 dropped`), are not carried over, and show as `✗`. "All tasks complete" now means every task is done or dropped. `/eod` offers drop alongside done and defer and lists dropped tasks, with reasons, in the trajectory.
+- **`wpl drop <task> --reason "..."`** (issue #61). Closes a task without doing it — handled elsewhere, judged optional, covered by someone else — as a new `dropped` status with a required `drop_reason`. Dropped tasks stay in the session and in history, count separately from done (`Done: 7/11 · 2 dropped`), are not carried over, and show as `✗` in the task list, the dashboard and the post-`wpl` context injection. A parent whose children are all done or dropped renders complete. `reckon` now refuses tasks that are already closed. "All tasks complete" now means every task is done or dropped. `/eod` offers drop alongside done and defer and lists dropped tasks, with reasons, in the trajectory.
 - **`wpl edit <task>`** (issue #60). Sets `--notes`, `--append-notes`, `--url`, `--ref` or `--est` after `add`, at any status, through the lock, undo snapshot and mutation log — no more hand edits of the session JSON mid-day. Titles stay with `rename`.
 - **`handoff.py write --replace`** (issue #59). A full rewrite of this session's contribution; `/eod` and stale-session recovery use it.
 
@@ -18,7 +18,7 @@ Task-outcome and handoff release — issues #59–#62.
 ### Fixed
 
 - **`actual_min` is `null` when nothing was measured** (issue #61). `done` (or `drop`) on a task that was never started recorded 0 minutes, which skewed estimate-accuracy data. It now stays `null` and displays as `—`; `history` shows a measured 0 as `0m` instead of `?`. Regression suite: `bin/test_issue_60_61.py`.
-- **Spec drift** (issue #62). The task-object table in `docs/state-schema.md` now lists `uid`, `priority`, `dispatched` and `drop_reason`; a closed session started again the same day has an explicit Closed Session Handler (archive, carry over, assemble) in the start skill; `docs/morning-assembly.md` now agrees with the start skill that pre-work is a headline only, never a synthetic task.
+- **Spec drift** (issue #62). The task-object table in `docs/state-schema.md` now lists `uid`, `priority`, `dispatched` and `drop_reason`; a closed session started again the same day has an explicit Closed Session Handler (archive, carry over, assemble) in the start skill, archives never overwrite an earlier one for the same date (`{date}-N.json`), and a same-day restart never sweeps from a future time; `docs/morning-assembly.md` now agrees with the start skill that pre-work is a headline only, never a synthetic task.
 
 ## 1.0.0-beta.6
 
