@@ -155,9 +155,12 @@ def _status_key(task):
 
 
 def parse_hhmm(s):
-    """Parse 'HH:MM' to total minutes since midnight."""
+    """Parse 'HH:MM' or an ISO 8601 timestamp to total minutes since midnight."""
     if not s:
         return None
+    if "T" in s:
+        dt = datetime.fromisoformat(s)
+        return dt.hour * 60 + dt.minute
     parts = s.split(":")
     return int(parts[0]) * 60 + int(parts[1])
 
