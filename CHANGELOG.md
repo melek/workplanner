@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.0-beta.8
+
+Task-time editing and dashboard fix: issue #67 and PR #68.
 
 ### Added
 
@@ -8,7 +10,7 @@
 
 ### Fixed
 
-- **Dashboard render crash after a protected block ends.** `parse_hhmm()` now accepts ISO 8601 timestamps as well as `HH:MM`. Block placement passes a task's `started_at` (stored as ISO 8601) to it, which raised `ValueError` once a block's end time had passed, leaving the dashboard pane frozen on its last good render.
+- **Dashboard render crash after a protected block ends** (PR #68). `parse_hhmm()` now accepts ISO 8601 timestamps as well as `HH:MM`. Block placement passes a task's `started_at` (stored as ISO 8601) to it, which raised `ValueError` once a block's end time had passed, leaving the dashboard pane frozen on its last good render.
 
 ## 1.0.0-beta.7
 
