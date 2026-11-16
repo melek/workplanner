@@ -986,6 +986,29 @@ def hhmm_diff(start_hhmm, end_hhmm):
     return max(0, (eh * 60 + em) - (sh * 60 + sm))
 
 
+def hhmm_arg(value):
+    """argparse type for an HH:MM clock time (00:00-23:59)."""
+    try:
+        h, m = value.split(":")
+        if len(m) != 2 or not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
+            raise ValueError
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected HH:MM, got {value!r}")
+    return f"{int(h):02d}:{m}"
+
+
+def stored_hhmm(value):
+    """HH:MM from a stored time, which may be HH:MM or ISO 8601. None if unset or unreadable."""
+    if not value:
+        return None
+    try:
+        if "T" in value:
+            return datetime.fromisoformat(value).strftime("%H:%M")
+        return hhmm_arg(value)
+    except (ValueError, argparse.ArgumentTypeError):
+        return None
+
+
 def hhmm_subtract(hhmm, minutes):
     """Subtract minutes from an HH:MM string, returning HH:MM."""
     h, m = map(int, hhmm.split(":"))
@@ -1911,7 +1934,7 @@ def cmd_rename(args):
 
 
 def cmd_edit(args):
-    """Edit a task's notes, url, ref or estimate after `add` (#60).
+    """Edit a task's notes, url, ref, estimate or times after `add` (#60, #67).
 
     Works on any status: adding the link where a finished task was resolved
     is the common case. Titles go through `rename`, which keeps
@@ -1948,8 +1971,10 @@ def cmd_edit(args):
     if args.est is not None:
         task["estimate_min"] = args.est
         changed.append("est")
+    changed += _edit_times(task, target, args)
     if not changed:
-        fail("Nothing to edit. Use --notes, --append-notes, --url, --ref or --est.")
+        fail("Nothing to edit. Use --notes, --append-notes, --url, --ref, --est, "
+             "--started, --finished or --actual.")
 
     save_session(session)
     render()
@@ -1957,6 +1982,48 @@ def cmd_edit(args):
     line = f"\u270e {tid(target)} edited: {', '.join(changed)}. [{remaining_summary(session)}]"
     emit_mutation("edit", session, affected=[(target, task)],
                   config=load_config(), human_line=line)
+
+
+def _edit_times(task, target, args):
+    """Apply --started/--finished/--actual to a task (#67). Returns the changed field names.
+
+    `actual_min` is recomputed from the start/finish pair whenever either
+    changes; `--actual` overrides it (time spent can be less than the span,
+    e.g. a task left open across a break). Fails before mutating anything.
+    """
+    started, finished, actual = args.started, args.finished, args.actual
+    if started is None and finished is None and actual is None:
+        return []
+    status = task.get("status")
+    closed = status in ("done", "dropped")
+    if status == "pending":
+        fail(f"{tid(target)} is pending; it has no times to edit. "
+             f"Start it with `switch`, or close it first.")
+    if (finished is not None or actual is not None) and not closed:
+        fail(f"{tid(target)} is {status}; --finished and --actual apply to done or dropped tasks. "
+             f"Only --started can be set before a task is closed.")
+    if actual is not None and actual < 0:
+        fail("--actual must be 0 or more minutes.")
+
+    new_start = started or stored_hhmm(task.get("started_at"))
+    new_finish = finished or stored_hhmm(task.get("finished_at"))
+    if new_start and new_finish and hhmm_diff(new_start, new_finish) == 0 and new_start != new_finish:
+        fail(f"Finish time {new_finish} is before start time {new_start}.")
+
+    changed = []
+    if started is not None:
+        task["started_at"] = started
+        changed.append("started")
+    if finished is not None:
+        task["finished_at"] = finished
+        changed.append("finished")
+    if actual is not None:
+        task["actual_min"] = actual
+        changed.append("actual")
+    elif closed and (started is not None or finished is not None) and new_start and new_finish:
+        task["actual_min"] = hhmm_diff(new_start, new_finish)
+        changed.append("actual")
+    return changed
 
 
 def cmd_dispatch(args):
@@ -3052,7 +3119,7 @@ def build_parser():
 
     p_edit = sub.add_parser(
         "edit",
-        help="Edit a task's notes, url, ref or estimate (any status). Titles: use rename.",
+        help="Edit a task's notes, url, ref, estimate or times (any status). Titles: use rename.",
     )
     p_edit.add_argument("target", help="Task ID (t3) or uid.")
     notes_group = p_edit.add_mutually_exclusive_group()
@@ -3062,6 +3129,15 @@ def build_parser():
     p_edit.add_argument("--url", type=str, default=None, help="Set the URL.")
     p_edit.add_argument("--ref", type=str, default=None, help="Set the issue reference.")
     p_edit.add_argument("--est", type=int, default=None, help="Set the estimate in minutes.")
+    p_edit.add_argument("--started", type=hhmm_arg, default=None,
+                        help="Set the start time HH:MM (any started or closed task). "
+                             "On a closed task, actual time is recomputed from start to finish.")
+    p_edit.add_argument("--finished", type=hhmm_arg, default=None,
+                        help="Set the finish time HH:MM (done or dropped tasks). "
+                             "Actual time is recomputed from start to finish.")
+    p_edit.add_argument("--actual", type=int, default=None,
+                        help="Set the actual minutes spent (done or dropped tasks). "
+                             "Overrides the start-to-finish span.")
     p_edit.add_argument(
         "--as",
         dest="as_title",

@@ -81,12 +81,12 @@ Tasks do NOT have an `id` field in JSON. Display IDs (`t1`, `t2`, ...) are deriv
 | `status` | `string` | yes | Current task state: `pending`, `in_progress`, `done`, `blocked`, `deferred`, `dropped`. `dropped` means closed without doing it (`wpl drop`). |
 | `priority` | `string` | no | Triage priority from assembly: `critical`, `high`, `medium`, `low`. |
 | `estimate_min` | `integer` | yes | Estimated duration in minutes. |
-| `actual_min` | `integer \| null` | no | Measured duration in minutes, set when the task reaches `done` or `dropped`. `null` when the task was never started — nothing was measured. |
+| `actual_min` | `integer \| null` | no | Measured duration in minutes, set when the task reaches `done` or `dropped`. `null` when the task was never started — nothing was measured. Correct it with `wpl edit --actual` (or `--started`/`--finished`, which recompute it). |
 | `source` | `string` | yes | Where the task originated: `carryover`, `linear`, `digest`, `slack`, `focus`, `manual`. |
 | `ref` | `string \| null` | no | Linear issue identifier (e.g. `"PROJ-456"`). |
 | `url` | `string \| null` | no | URL for the source reference. |
-| `started_at` | `string (HH:MM) \| null` | no | Time the task was started. |
-| `finished_at` | `string (HH:MM) \| null` | no | Time the task was completed. |
+| `started_at` | `string (HH:MM) \| null` | no | Time the task was started. Set later with `wpl edit --started`. |
+| `finished_at` | `string (HH:MM) \| null` | no | Time the task was completed. Set later with `wpl edit --finished`. |
 | `notes` | `string \| null` | no | Free-text notes. Set at `add` or later with `wpl edit`. |
 | `dispatched` | `boolean` | no | `true` while the task is being worked on in another session (`wpl dispatch`). Cleared by `switch`, `done` and `drop`. |
 | `drop_reason` | `string` | no | Why the task was closed without doing it. Required by `wpl drop`; set by `reckon x` from the task's `defer_reason`. |

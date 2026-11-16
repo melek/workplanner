@@ -40,7 +40,7 @@ The `wpl` wrapper lives at `~/.workplanner/bin/wpl` and forwards to `bin/transit
 | `dispatch` | `<target>` | Mark a task as dispatched to another session |
 | `remove` | `<target> [--as "<title>"]` | Remove a task entirely |
 | `rename` | `<target> <new-title...> [--as "<old-title>"]` | Update a task's title; preserves the original in `original_title` on first rename |
-| `edit` | `<target> [--notes TEXT \| --append-notes TEXT] [--url URL] [--ref REF] [--est MIN] [--as "<title>"]` | Edit a task's notes, URL, reference or estimate after `add`, at any status |
+| `edit` | `<target> [--notes TEXT \| --append-notes TEXT] [--url URL] [--ref REF] [--est MIN] [--started HH:MM] [--finished HH:MM] [--actual MIN] [--as "<title>"]` | Edit a task's notes, URL, reference, estimate or times after `add` |
 | `status` | — | Print one-line status summary and full compact task list |
 
 ### Global flags
@@ -186,6 +186,7 @@ A `PostToolUse` plugin hook (`bin/post-tool-use-hook.sh`) provides a secondary f
 
 - Sets any of `notes` (`--notes` replaces, `--append-notes` appends with ` | `), `url`, `ref`, `estimate_min`
 - Works at any status — adding the link where a finished task was resolved is the common case
+- Times (#67): `--started HH:MM` on any started or closed task; `--finished HH:MM` and `--actual MIN` on `done` or `dropped` tasks only. Changing the start or finish of a closed task recomputes `actual_min` from the pair; `--actual` overrides it, for when time spent is less than the span (a task left open across a break). A finish before the start is refused
 - Titles go through `rename`, which keeps `original_title`
 - Use it instead of editing the session JSON by hand during the day; it goes through the lock, undo snapshot and mutation log
 
