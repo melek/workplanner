@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **`wpl edit --started/--finished/--actual`** (issue #67). A task's times can now be corrected in place. `done` records wall-clock time since the start, so a task left open across a break recorded the whole span, and the only fix was `remove` + `add --done`, which changed the uid. Changing the start or finish of a closed task recomputes `actual_min`; `--actual` overrides the span. `--finished` and `--actual` apply to done or dropped tasks; times must be `HH:MM` and a finish before the start is refused. Regression suite: `bin/test_issue_67.py`.
+
 ### Fixed
 
 - **Dashboard render crash after a protected block ends.** `parse_hhmm()` now accepts ISO 8601 timestamps as well as `HH:MM`. Block placement passes a task's `started_at` (stored as ISO 8601) to it, which raised `ValueError` once a block's end time had passed, leaving the dashboard pane frozen on its last good render.
