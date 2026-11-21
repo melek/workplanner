@@ -27,31 +27,11 @@ cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 [ "$tool_name" = "Bash" ] || exit 0
 [ -n "$cmd" ] || exit 0
 
-# Recognize a wpl call: a command segment (split on && || ; |) whose first
-# word, after any VAR=value assignments, is `wpl`, `*/wpl`, or
-# `python3 .../transition.py`. Arguments that merely mention the wrapper
-# path (a commit message, an issue body, a sed over transition.py) don't
-# count (issue #65).
-is_wpl=$(printf '%s' "$cmd" | python3 -c '
-import re, shlex, sys
-cmd = sys.stdin.read()
-for seg in re.split(r"&&|\|\||;|\||\n", cmd):
-    try:
-        words = shlex.split(seg)
-    except ValueError:
-        words = seg.split()
-    while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
-        words.pop(0)
-    if not words:
-        continue
-    w0 = words[0]
-    if w0 == "wpl" or w0.endswith("/wpl"):
-        print(1); break
-    if re.match(r"^(.*/)?python3?$", w0) and len(words) > 1 and words[1].endswith("/transition.py"):
-        print(1); break
-else:
-    print(0)
-' 2>/dev/null || echo 0)
+# Recognize a wpl call (issue #65): a simple command whose first word, after
+# any VAR=value assignments, is `wpl`, `*/wpl`, or `python3 .../transition.py`.
+# bin/hook_is_wpl.py tokenizes like a shell, so quoted strings and heredoc
+# bodies that mention wpl (a commit message, an issue body) don't count.
+is_wpl=$(printf '%s' "$cmd" | python3 "$(dirname "$0")/hook_is_wpl.py" 2>/dev/null || echo 0)
 [ "$is_wpl" = "1" ] || exit 0
 
 # Resolve the wpl wrapper. Prefer the per-user wrapper path; fall back
