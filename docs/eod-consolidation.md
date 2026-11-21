@@ -74,4 +74,4 @@ If either source (`personal_sub_issue` / `config.coordination_channel`) is unset
 
 1. Extract all tasks with status `deferred` or `blocked` from the session.
 2. Write the carryover record into session state for the next morning assembly. Tasks keep their `defer_reason` field intact.
-3. Close the session: set `checkpoint: "closed"`. Step 2 must have succeeded; if it did not, do not close.
+3. Close the session with `wpl session close`. The CLI refuses unless the day's handoff has content (issue #82), so Step 2's gate is checked, not self-reported. After close, `wpl session reopen --reason` reopens the day to log post-close work; close again once the handoff is updated.

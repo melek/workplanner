@@ -86,8 +86,17 @@ Context:
 
 {Extra instructions from arguments, if any}
 
+Done when: {the task's acceptance condition, from its notes or title; one line}
+
+Authorization (what needs its own yes in this session):
+{output of `wpl authorization`, verbatim}
+
+{Output of `wpl addenda --for dispatch`, if any}
+
 Review the situation and suggest an approach before making changes.
 ```
+
+Run `python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" authorization` and paste its output verbatim (issue #82): the dispatched session doesn't inherit this conversation's approvals, so it needs the scope in writing.
 
 If the task has a `ref` that looks like a Linear issue, include: `Check Linear issue {ref} for full context.`
 
@@ -99,7 +108,7 @@ Keep it concise — the dispatched session has full filesystem and CLAUDE.md acc
 mkdir -p "$PROFILE_ROOT/handoffs"
 ```
 
-Write to `$PROFILE_ROOT/handoffs/t{index+1}.md`.
+Write to `$PROFILE_ROOT/handoffs/dispatch-{uid}.md`, keyed by the task's uid (issue #82). Task IDs like `t3` are positional and reused every day, so `t3.md` was overwritten by the next day's `t3`.
 
 ### 5. Launch tmux pane
 
@@ -111,7 +120,7 @@ Write launcher to `/tmp/dispatch-t{index+1}.sh`. The launcher must export `WPL_P
 #!/bin/bash -l
 cd {working_dir}
 export WPL_PROFILE={PROFILE_NAME}
-claude --permission-mode {PERMISSION_MODE} "$(cat $PROFILE_ROOT/handoffs/t{index+1}.md)"
+claude --permission-mode {PERMISSION_MODE} "$(cat $PROFILE_ROOT/handoffs/dispatch-{uid}.md)"
 ```
 
 Interpolate `{PROFILE_NAME}`, `{PERMISSION_MODE}` (resolved above) and `$PROFILE_ROOT` into the launcher text at write-time — the child shell won't have the parent's `$PROFILE_NAME` variable unless you bake it in.

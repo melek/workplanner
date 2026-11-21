@@ -166,6 +166,13 @@ A `PostToolUse` plugin hook (`bin/post-tool-use-hook.sh`) provides a secondary f
 - Sets `status: "done"`, `finished_at`, `actual_min` (elapsed since `started_at`; `null` if the task was never started — nothing was measured)
 - Advances `current_task_index` to next pending task
 - If no pending tasks remain, sets `current_task_index: null`
+- Accepts `in_progress`, `pending`, `blocked` and `deferred` tasks (deferred added in #82: work deferred earlier often gets done the same day)
+
+### session close / session reopen (#82)
+
+- `session close`: refuses unless the day's handoff file has content (or `--without-handoff --reason`). Sets `checkpoint: "closed"`, `eod_handoff_written`, `closed_at`; undo-snapshotted and logged like any mutation. Open tasks are listed and carry over.
+- `session reopen --reason`: sets `checkpoint` back to `assembly_complete` and appends to `reopened`. The next `close` requires the handoff to have been updated since.
+- While closed, other mutations still apply, with a one-line stderr notice that the handoff is already written. `status` shows `| CLOSED HH:MM`.
 
 ### blocked
 

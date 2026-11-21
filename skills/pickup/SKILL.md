@@ -39,6 +39,17 @@ python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" status
 
 Parse the JSON output. If no session exists, stop: "No active session. Run `/workplanner:start` first."
 
+
+### Profile addenda for this skill
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" addenda --for pickup
+```
+
+Sections it prints are this profile's overrides for `/pickup` (issue #82). Apply each one at the step it names, in place of the default behavior described here. "No profile addenda for pickup." means there are none.
+
+Also read the authorization scope: `python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" authorization`. Step 6 uses it.
+
 ### Step 2: Identify the task
 
 **If argument is a task ID or index:** look it up directly in the status output.
@@ -99,13 +110,16 @@ Present a summary:
 
 ### Suggested approach
 <proposed steps — from briefing's Draft Plan if available, refined with any fresh context>
+
+### Needs its own yes
+<each step above that the authorization scope says needs separate approval (posting, publishing, merging, pushing, writes to shared systems…), one per line; "None" if there are none>
 ```
 
-Then ask: "Ready to start, or want to adjust the approach?"
+Then ask: "Ready to start, or want to adjust the approach?" A yes to this covers the plan's local, reversible steps. The items under **Needs its own yes** still need their own yes, each when you reach it (issue #82).
 
 ## Notes
 
 - This skill is the local-session counterpart of `/workplanner:dispatch` (which spawns a new tmux pane)
 - The user may run this from a different Claude session than the one that ran `/workplanner:start`
-- Always use `transition.py` for state changes, never edit the JSON directly
+- Always use `transition.py` for state changes, never edit the session JSON directly. Opening the day (`/start` assembly) is the one place a skill writes it; closing uses `wpl session close`
 - To record context while working (a link to where the task was resolved, a follow-up detail), use `wpl edit tN --append-notes "..."` or `--url`. If the task turns out to need no work, close it with `wpl drop tN --reason "..."` rather than `done`

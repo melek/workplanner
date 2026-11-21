@@ -25,7 +25,10 @@ Source of truth for all session state. If the JSON and any derived artifacts (ma
 | `current_task_index` | `integer \| null` | yes | 0-based index of the active task in the `tasks` array, or `null` if no task is active. |
 | `tasks` | `array` | yes | Ordered list of task objects. |
 | `coordination_thread` | `object \| null` | no | Captured Slack coordination thread, if any. |
-| `eod_handoff_written` | `boolean` | no | Canonical EOD-completion marker. Set to `true` by `/eod` Step 2 after the local handoff doc is written successfully; session close (Step 4) gates on this being true. Absent or `false` in a past-dated session signals that EOD did not complete and triggers the stale-session handler in `/start`. |
+| `eod_handoff_written` | `boolean` | no | Canonical EOD-completion marker. Set by `wpl session close` (issue #82): `true` once the CLI has checked that the day's handoff file has content, `false` only with `--without-handoff --reason`. Absent or `false` in a past-dated session signals that EOD did not complete and triggers the stale-session handler in `/start`. |
+| `closed_at` | `string` (HH:MM) | no | Local time (profile timezone) of `wpl session close`. Shown as `CLOSED HH:MM` on the status line and in the hooks. |
+| `close_reason` | `string` | no | Reason given to `wpl session close --reason`, e.g. why there was no handoff. |
+| `reopened` | `array` of `{at, at_iso, reason}` | no | Each `wpl session reopen --reason`. The next `session close` requires the handoff to have been updated after the last reopen. |
 | `sweep_since` | `string` (ISO 8601) \| null | no | Cutoff timestamp for inbox sweep. Computed from previous session's EOD or yesterday 08:00. |
 | `inbox_items` | `array` | no | Raw captured items from inbox sweep. Cleared after `agenda_built`. See inbox item schema. |
 | `headlines` | `array` of `string` | no | FYI items for agenda header (from digest + low-signal sources). |
@@ -98,7 +101,9 @@ Tasks do NOT have an `id` field in JSON. Display IDs (`t1`, `t2`, ...) are deriv
 
 **During the day** (task transitions): always use `bin/transition.py`. It handles atomic writes, re-rendering, and validation.
 
-**During assembly** (building the session) and **during EOD** (closing the session): write JSON directly using atomic writes (tmp file → mv). These are bulk operations where the skill owns the full state lifecycle.
+**During assembly** (building the session): write JSON directly using atomic writes (tmp file → mv). This is a bulk operation where the skill owns the full state.
+
+**Closing and reopening the session** go through the CLI (issue #82): `wpl session close` (refuses unless the day's handoff has content; `--without-handoff --reason` for an explicit exception) and `wpl session reopen --reason`. Mutations on a closed session still apply, with a one-line notice that the handoff is already written.
 
 ```bash
 python3 bin/transition.py <command> [args]
@@ -121,7 +126,8 @@ Created during first-run setup. Persists across sessions.
 | `eod_target` | `string` (HH:MM) | yes | Default end-of-day target time. |
 | `dashboard_pane` | `string` enum | no | `"auto"` \| `"always"` \| `"never"`. Controls whether `/start` spawns a tmux dashboard pane. `"auto"` (default): spawn when `$TMUX` is set. `"never"`: never spawn. `"always"`: attempt spawn regardless of `$TMUX`. |
 | `dispatch.permission_mode` | `string` enum | no | `--permission-mode` for sessions launched by `/workplanner:dispatch`: `"plan"` (default), `"default"`, `"acceptEdits"`, `"bypassPermissions"`. A `--mode` argument to the skill overrides it. Never inherited from the parent session. |
-| `runbook_addenda` | `string` (path) | no | Profile-scoped overrides to the inbox runbooks, as a markdown file. Path is relative to the profile directory (e.g. `"runbook_addenda.md"`). `/start` reads it during pre-flight and applies its rules on top of `docs/inbox-runbooks.md`. Absent = base runbooks only. |
+| `runbook_addenda` | `string` (path) | no | Profile-scoped overrides to the inbox runbooks, as a markdown file. Path is relative to the profile directory (e.g. `"runbook_addenda.md"`). A `## ` section whose heading starts with a skill name and `:` or a dash (`## eod: commit the workspace`) applies to that skill; unkeyed sections apply to `/start`'s inbox runbooks, as before. Each skill prints its own sections with `wpl addenda --for <skill>` in its first step (issue #82). Absent = base behavior only. |
+| `authorization` | `string` (path) | no | The profile's authorization scope, as a markdown file relative to the profile directory: which actions need their own yes and what one approval covers. The SessionStart hook injects it verbatim, `/dispatch` copies it into the dispatched prompt, and `/pickup` lists the plan steps it covers (issue #82). `wpl authorization` prints it. Absent = the default rule (see `docs/methodology.md` → Authorization scope). |
 | `protected_blocks` | `array` | no | Time blocks that should not be scheduled over. |
 | `protected_blocks[].label` | `string` | yes | Display name for the block. |
 | `protected_blocks[].start` | `string` (HH:MM) | yes | Block start time. |

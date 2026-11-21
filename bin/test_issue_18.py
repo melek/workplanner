@@ -243,16 +243,12 @@ def main():
 
         # ── V6: session-hook resolves from cwd (fix #6) ──────────────
         # Write today's session in pb and hit the hook from ws_b.
-        # The hook uses `date +%Y-%m-%d` (local wall clock), so the
-        # session date must match local today — not UTC today — for the
-        # hook's freshness gate to pass. This test doesn't exercise the
-        # UTC-vs-local staleness logic; it just checks profile
-        # resolution.
-        from datetime import date as _local_date
+        # Since #82 the hook dates sessions in the profile timezone (UTC
+        # here), the same as the CLI's local_today().
         _write_session(profile_b, tasks=[
             {"uid": "v6b-1", "title": "PB-task", "status": "in_progress",
              "estimate_min": 30, "source": "manual", "started_at": "09:00"},
-        ], session_date=_local_date.today().isoformat(), current_index=0)
+        ], session_date=_utc_today().isoformat(), current_index=0)  # hook uses the profile tz (UTC here) since #82
         # Ensure wpl wrapper exists — ensure_wrapper() runs on every
         # transition.py call, so the prior _run calls created it.
         wpl_bin = wpl_root / "bin" / "wpl"

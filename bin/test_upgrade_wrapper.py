@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -33,7 +33,7 @@ def main():
         (profile_dir / "session").mkdir(parents=True)
         (profile_dir / "config.json").write_text('{"workspaces": [], "timezone": "UTC"}\n')
         (profile_dir / "session" / "current-session.json").write_text(json.dumps({
-            "date": date.today().isoformat(), "week": "W43",
+            "date": datetime.now(timezone.utc).date().isoformat(),  # profile tz is UTC (#82) "week": "W43",
             "checkpoint": "assembly_complete", "eod_target": "18:00",
             "current_task_index": 0, "tasks": [
                 {"uid": "aaaa0001", "title": "Upgraded task", "status": "in_progress",

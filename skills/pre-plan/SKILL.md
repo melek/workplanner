@@ -34,6 +34,14 @@ All `briefings/` paths below should be built as `$PROFILE_ROOT/briefings/{sessio
 
 ## Procedure
 
+### Step 0: Profile addenda
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" addenda --for pre-plan
+```
+
+Sections it prints are this profile's overrides for `/pre-plan` (issue #82). Apply each one at the step it names, in place of the default behavior described here. "No profile addenda for pre-plan." means there are none.
+
 ### Step 1: Load session state
 
 ```bash

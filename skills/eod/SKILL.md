@@ -33,6 +33,13 @@ PROFILE_ROOT=$(wpl profile whoami --print-root)
 All file paths below should be expressed relative to `$PROFILE_ROOT` (e.g. `$PROFILE_ROOT/session/current-session.json`). Subprocesses launched by this skill (`handoff.py`, `transition.py`) inherit the session's environment and run their own path-based resolution — no extra plumbing needed.
 
 ## Procedure
+### Step 0: Profile addenda
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" addenda --for eod
+```
+
+Sections it prints are this profile's overrides for `/eod` (issue #82). Apply each one at the step it names, in place of the default behavior described here. "No profile addenda for eod." means there are none.
 
 ### Step 1: Finalize open tasks
 
@@ -157,9 +164,12 @@ If `config.coordination_channel` is unset, skip this sub-step silently.
 
 ### Step 4: Close session
 
-Write final state to session JSON:
-- Set `checkpoint: "closed"`
-- Set `eod_handoff_written: true` (from Step 2 — must be true to reach this step)
-- Atomic write + re-render dashboard
+```bash
+wpl session close
+```
+
+The CLI checks that today's handoff file has content before closing (issue #82), so the Step 2 gate is mechanical rather than self-reported. It sets `checkpoint: "closed"`, `eod_handoff_written: true` and `closed_at`, takes an undo snapshot and re-renders the dashboard. Don't edit the session JSON for this. If it refuses, the handoff write failed: fix that, don't bypass it. Only when the user says to close with no handoff, use `wpl session close --without-handoff --reason "..."`.
+
+**After close.** Post-EOD work is fine, and `wpl` still accepts changes; each one prints a notice that the handoff is already written. To log real post-close work, run `wpl session reopen --reason "..."`, record the tasks, update the handoff (`handoff.py write --from-json -`; it merges by section), then `wpl session close` again. Close refuses until the handoff has been updated since the reopen.
 
 Confirm: "Day closed. Handoff written to `~/.workplanner/profiles/<name>/handoffs/YYYY-MM-DD.md`. Deferred tasks will carry over tomorrow with their reasons."
