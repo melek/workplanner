@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Handoffs after a weekend or time off are read** (issue #74). Morning assembly read only the handoff dated yesterday, so the first session after a gap never saw the last one. New `handoff.py pending` returns every handoff before today that a later session hasn't reviewed (with no review record, only the most recent); `handoff.py mark-reviewed` records how far review has got, in `handoffs/.reviewed`. `/start` reads `pending` at Step 0.25 and marks them reviewed once assembly completes. Regression suite: `bin/test_issue_74.py`.
+
 ## 1.0.0-beta.8
 
 Task-time editing and dashboard fix: issue #67 and PR #68.
