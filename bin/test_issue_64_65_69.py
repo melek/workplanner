@@ -59,10 +59,15 @@ def test_65_hook_matches_real_calls_only():
     with Ctx() as c:
         _write_session(c.profile_dir, [_task("aaaa0001", "Alpha")], 0)
         fires = ["wpl done t1", "cd /tmp && wpl status", "FOO=1 ~/.workplanner/bin/wpl status",
-                 "python3 /x/workplanner/bin/transition.py status", "true; wpl status"]
+                 "python3 /x/workplanner/bin/transition.py status", "true; wpl status",
+                 "echo hi\nwpl status"]
         silent = ["gh issue create --body 'call ~/.workplanner/bin/wpl here'",
                   "sed -n 1,5p /x/workplanner/bin/transition.py",
-                  "git commit -m 'wpl status fix'", "echo wpl"]
+                  "git commit -m 'wpl status fix'", "echo wpl",
+                  # Quoted text and heredoc bodies are data, even with separators inside.
+                  "git commit -m 'fix; wpl status'",
+                  "git commit -q -F - <<'MSG'\nobject; wpl add --notes-file\nMSG\ngit push",
+                  "cat <<EOF\nwpl done t1\nEOF"]
         for cmd in fires:
             assert "Done:" in _hook(c, cmd), f"should fire: {cmd}"
         for cmd in silent:
