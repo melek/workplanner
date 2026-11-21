@@ -362,6 +362,20 @@ def test_closed_notice_when_no_handoff():
         assert "no handoff was written" in _context(c)
 
 
+def test_timezone_lookup_is_silent():
+    """apply_profile_timezone must not prompt or print errors of its own."""
+    with Ctx() as c:
+        _open(c)
+        other = c.wpl_root / "profiles" / "other"
+        (other / "session").mkdir(parents=True)
+        (other / "config.json").write_text('{"workspaces": ["/nonexistent/x"], "timezone": "UTC"}\n')
+        (c.profile_dir / "config.json").write_text('{"workspaces": ["/nonexistent/y"], "timezone": "UTC"}\n')
+        rc, out, err = c.run("decision", "list")
+        assert "not associated" not in err, err
+        rc, out, err = c.run("status")
+        assert rc != 0 and err.count("not associated") == 1, err
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

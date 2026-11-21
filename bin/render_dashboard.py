@@ -288,6 +288,13 @@ def apply_profile_timezone(config=None):
     """
     tz_name = (config if config is not None else load_config()).get("timezone")
     if not tz_name:
+        # Same user.json fallback as the CLI's load_config().
+        try:
+            root = Path(os.environ.get("WPL_ROOT") or (Path.home() / ".workplanner"))
+            tz_name = json.loads((root / "user.json").read_text()).get("timezone")
+        except (OSError, ValueError, AttributeError):
+            tz_name = None
+    if not tz_name:
         return
     try:
         from zoneinfo import ZoneInfo

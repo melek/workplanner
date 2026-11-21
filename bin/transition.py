@@ -267,6 +267,25 @@ def _first_run_prompt(cwd):
         return None
 
 
+def _quiet_profile_root():
+    """Resolution steps 1–3 only: no prompt, no error output (#82).
+
+    For best-effort lookups that must not change what a command prints,
+    such as applying the profile timezone before the command runs.
+    Returns None where resolve_profile_root() would prompt or fail.
+    """
+    override = PROFILE_OVERRIDE or os.environ.get("WPL_PROFILE", "").strip() or None
+    if override:
+        return _find_profile_by_name(override)
+    matched, _ws = _resolve_by_cwd(_normalize_path(os.getcwd()))
+    if matched is not None:
+        return matched
+    all_profiles = list(_iter_profile_dirs())
+    if len(all_profiles) == 1 and not _profile_workspaces(all_profiles[0]):
+        return all_profiles[0]
+    return None
+
+
 def resolve_profile_root():
     """Resolve the active profile directory.
 
@@ -826,10 +845,19 @@ def apply_profile_timezone():
     subprocess that inherits the environment, agree. No-op when the
     profile has no timezone or can't be resolved.
     """
-    try:
-        tz_name = (load_config() or {}).get("timezone")
-    except SystemExit:
+    root = _quiet_profile_root()
+    if root is None:
         return
+    try:
+        cfg = json.loads((root / "config.json").read_text())
+    except (OSError, ValueError):
+        cfg = {}
+    tz_name = cfg.get("timezone")
+    if not tz_name:
+        try:
+            tz_name = json.loads((WPL_ROOT / "user.json").read_text()).get("timezone")
+        except (OSError, ValueError, AttributeError):
+            tz_name = None
     if not tz_name:
         return
     try:
@@ -3746,7 +3774,7 @@ def main():
             if profile_name:
                 print(f"(profile: {profile_name} — {resolved_via_human(source)})")
 
-    if args.command not in ("profile",):
+    if args.command not in ("profile", "decision"):
         apply_profile_timezone()
 
     handler = DISPATCH.get(args.command)
