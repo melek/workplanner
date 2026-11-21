@@ -157,7 +157,7 @@ Exit code 0 on success, 1 on precondition failure (error to stderr).
 
 Every mutating command emits the full compact task list after its one-line confirmation. This keeps the LLM's model of session state synchronized with engine state across turn boundaries — without the LLM having to call `wpl status` between every mutation. The list includes UIDs (stable across mutations) alongside display IDs (`tN`, unstable; recomputed on every mutation). When addressing tasks, prefer UIDs.
 
-A `PostToolUse` plugin hook (`bin/post-tool-use-hook.sh`) provides a secondary feedback channel: after any Bash call whose command starts with `wpl`, the hook injects a compact session-state summary into the next turn's context. Both channels reinforce each other; neither is redundant.
+A `PostToolUse` plugin hook (`bin/post-tool-use-hook.sh`) provides a secondary feedback channel: after any Bash call whose command starts with `wpl`, the hook injects a short state anchor (done/total counts, time left, the current task) into the next turn's context. It does not repeat the task list the command already printed (issue #65). A command counts as a `wpl` call only when a segment of it (split on `&&`, `||`, `;`, `|`) starts with `wpl`, `*/wpl` or `python3 …/transition.py`; arguments that merely mention those paths don't trigger it.
 
 ## Transition Effects
 

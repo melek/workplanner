@@ -323,8 +323,10 @@ def test_hook_shows_dropped():
                               env={**os.environ, **c.env, "WPL_BIN": str(wrapper)},
                               capture_output=True, text=True)
         out = proc.stdout
-        assert "[\u2717] t1" in out, f"dropped task shown as open:\n{out}"
+        # Since #65 the hook no longer repeats the task list; the counts line
+        # must still account for the dropped task.
         assert "1 dropped" in out, f"counts line should mention dropped:\n{out}"
+        assert "[\u2717] t1" not in out, f"task list should not be repeated (#65):\n{out}"
 
 
 def test_parent_with_dropped_children_completes():

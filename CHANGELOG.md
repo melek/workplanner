@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- **Post-wpl hook no longer repeats the task list, and fires only on real `wpl` calls** (issue #65). The command's own output already carries the list, so the hook now injects just the counts and current task. A command triggers it only when one of its segments (split on `&&`, `||`, `;`, `|`) starts with `wpl`, `*/wpl` or `python3 …/transition.py`; arguments that merely mention those paths (an issue body, a `sed` over `transition.py`) no longer do.
+- **SessionStart hint reads as a fallback** (issue #64): "if it is not found, call ~/.workplanner/bin/wpl" instead of "add ~/.workplanner/bin to PATH", which agents read as a setup step on every session.
+- **`wpl backlog --edit` keeps the estimate when `--est` is omitted** (issue #69). The 30-minute default now applies only when adding. Regression suite for all three: `bin/test_issue_64_65_69.py`.
 - **Handoffs after a weekend or time off are read** (issue #74). Morning assembly read only the handoff dated yesterday, so the first session after a gap never saw the last one. New `handoff.py pending` returns every handoff before today that a later session hasn't reviewed (with no review record, only the most recent); `handoff.py mark-reviewed` records how far review has got, in `handoffs/.reviewed`. `/start` reads `pending` at Step 0.25 and marks them reviewed once assembly completes. Regression suite: `bin/test_issue_74.py`.
 
 ## 1.0.0-beta.8
