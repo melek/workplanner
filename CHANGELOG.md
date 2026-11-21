@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.0-beta.10
+
+Backlog surfacing fix: issue #70 (PR #80).
 
 ### Fixed
 
