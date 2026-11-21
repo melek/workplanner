@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.0-beta.11
 
 Ergonomics pass (issue #82), from four weeks of use and three framework reviews (executive-assistant practice, Safety-II/STPA, context engineering).
 
