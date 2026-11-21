@@ -30,7 +30,7 @@ Four sequential steps. Unlike morning assembly, these are not checkpointed — t
 3. Sections written: `Session trajectory` (including dropped tasks with their `drop_reason`), `Deferred with reasons` (each deferred/blocked task with its `defer_reason`), `Open questions`, `Context for tomorrow`.
 4. Session identifier is auto-detected: `$CLAUDE_SESSION_ID` → `$TMUX_PANE` → process-start-hash fallback.
 5. EOD writes with `--replace`: a full rewrite of this session's sub-sections, so a re-run can also clear a section that became empty. Without `--replace`, `handoff.py write` keeps sections that aren't passed (for incremental writes during the day); an explicit empty value clears one. Other sessions' sub-sections are never touched.
-6. On success, set `eod_handoff_written: true` in session state. On failure, surface the error, leave the session open, and do not advance to steps 3-4.
+6. On success, Step 4's `wpl session close` checks the file and sets `eod_handoff_written` itself. On failure, surface the error, leave the session open, and do not advance to steps 3-4.
 
 **Stale-session recovery uses the same path.** When `/start` finds a session with `eod_handoff_written: false` from an earlier date, it backfills a handoff at `~/.workplanner/profiles/<name>/handoffs/{stale_date}.md` using a distinct session-id of the form `stale-recovery-{stale_date}`. The next morning's `/start` Step 0.25 reads the backfilled handoff exactly as it would a normal `/eod`-written one — there is no second mechanism or separate path. No retroactive external-post prompt fires. See `skills/start/SKILL.md` → "Stale Session Handler".
 

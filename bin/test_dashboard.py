@@ -20,6 +20,14 @@ import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+
+# The test profiles run in UTC, and since #82 wpl runs each process in the
+# profile timezone. Run the tests in UTC too, so the times they write
+# (`_ago`, block times) match what the CLI and dashboard read.
+os.environ["TZ"] = "UTC"
+if hasattr(__import__("time"), "tzset"):
+    __import__("time").tzset()
+
 REPO = Path(__file__).resolve().parent.parent
 RENDER = REPO / "bin" / "render_dashboard.py"
 TRANSITION = REPO / "bin" / "transition.py"

@@ -282,6 +282,86 @@ def test_now_hhmm_uses_profile_timezone():
         assert min(diff, 24 * 60 - diff) <= 2, (started, want.strftime("%H:%M"))
 
 
+# ── 5. Review fixes ─────────────────────────────────────────────────
+
+def test_actual_min_with_system_tz_different_from_profile():
+    """Profile UTC, system Asia/Tokyo: switch then done at once is ~0 minutes, not 540."""
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A")], None)
+        env = {**os.environ, **c.env, "TZ": "Asia/Tokyo"}
+        for args in (("switch", "t1"), ("done", "t1")):
+            p = subprocess.run([sys.executable, str(TRANSITION), *args], cwd=c.base, env=env,
+                               capture_output=True, text=True)
+            assert p.returncode == 0, p.stderr
+        assert (_session(c)["tasks"][0].get("actual_min") or 0) <= 2, _session(c)["tasks"][0]
+
+
+def _addenda_file(c, text):
+    (c.profile_dir / "addenda.md").write_text(text)
+    (c.profile_dir / "config.json").write_text(
+        json.dumps({"workspaces": [], "timezone": "UTC", "runbook_addenda": "addenda.md"}))
+
+
+def test_addenda_without_sections_or_with_preamble_stays_start():
+    with Ctx() as c:
+        _open(c)
+        _addenda_file(c, "- Skip bot messages.\n- Prefer Linear.\n")
+        assert "Skip bot messages" in c.ok("addenda", "--for", "start")
+        _addenda_file(c, "# Title\n\nGeneral: skip bots.\n\n## eod: commit\nEOD-X\n")
+        start = c.ok("addenda", "--for", "start")
+        assert "General: skip bots." in start and "EOD-X" not in start, start
+        assert "EOD-X" in c.ok("addenda", "--for", "eod")
+
+
+def test_addenda_fences_and_key_variants():
+    with Ctx() as c:
+        _open(c)
+        _addenda_file(c, "## /eod: rule\nA\n```\n## not a heading\n```\nB\n\n"
+                         "## `pickup` rules\nP\n\n## Dispatch-free days\nD\n\n## Freeze window Fridays\nF\n")
+        eod = c.ok("addenda", "--for", "eod")
+        assert "A" in eod and "## not a heading" in eod and "B" in eod, eod
+        assert "P" in c.ok("addenda", "--for", "pickup")
+        start = c.ok("addenda", "--for", "start")
+        assert "Freeze window Fridays" in start and "Dispatch-free days" in start, start
+
+
+def test_addenda_missing_file_is_reported():
+    with Ctx() as c:
+        _open(c)
+        (c.profile_dir / "config.json").write_text(
+            json.dumps({"workspaces": [], "timezone": "UTC", "runbook_addenda": "gone.md"}))
+        assert "not found" in c.ok("addenda", "--for", "start")
+
+
+def test_reopen_clears_flag_and_without_handoff_keeps_existing():
+    with Ctx() as c:
+        _open(c)
+        _handoff(c)
+        c.ok("session", "close")
+        c.ok("session", "reopen", "--reason", "late work")
+        assert _session(c)["eod_handoff_written"] is False
+        c.ok("session", "close", "--without-handoff", "--reason", "nothing new")
+        assert _session(c)["eod_handoff_written"] is True, "existing handoff still counts"
+
+
+def test_done_from_deferred_has_no_measured_time():
+    with Ctx() as c:
+        _write_session(c.profile_dir, [_task("aaaa0001", "A", status="deferred", started_at="01:00"),
+                                       _task("bbbb0002", "B")], 1)
+        c.ok("done", "t1")
+        t = _session(c)["tasks"][0]
+        assert t["status"] == "done" and t.get("actual_min") is None, t
+
+
+def test_closed_notice_when_no_handoff():
+    with Ctx() as c:
+        _open(c)
+        c.ok("session", "close", "--without-handoff", "--reason", "x")
+        rc, _, err = c.run("add", "Late", "--done")
+        assert "none was written" in err, err
+        assert "no handoff was written" in _context(c)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

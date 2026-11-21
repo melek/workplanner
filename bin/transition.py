@@ -814,26 +814,35 @@ def fail(msg, **extra):
     emit_error(msg, **extra)
 
 
-def now_local(config=None):
-    """Current time in the profile's timezone (#82).
+def apply_profile_timezone():
+    """Run this process in the profile's timezone (#82).
 
-    `local_today()` already uses `config.timezone`; clock times must use
-    the same zone, or a task started near midnight lands on the wrong
-    day. Falls back to system local time when no timezone is set or the
-    profile can't be resolved.
+    `local_today()` dates things in `config.timezone`, while clock times
+    (`started_at`, `actual_min`, the dashboard's "now", log timestamps)
+    came from the system clock. When the two differ (travel, a home-zone
+    profile on a remote machine) a task could land on the wrong day and
+    elapsed times were off by the offset. Setting TZ once makes every
+    naive `datetime.now()` in this process, and in the dashboard
+    subprocess that inherits the environment, agree. No-op when the
+    profile has no timezone or can't be resolved.
     """
-    cfg = config
-    if cfg is None:
-        try:
-            cfg = load_config()
-        except SystemExit:
-            cfg = {}
-    tz_name = (cfg or {}).get("timezone")
-    if tz_name:
-        try:
-            return datetime.now(ZoneInfo(tz_name))
-        except Exception:
-            pass
+    try:
+        tz_name = (load_config() or {}).get("timezone")
+    except SystemExit:
+        return
+    if not tz_name:
+        return
+    try:
+        ZoneInfo(tz_name)
+    except Exception:
+        return
+    os.environ["TZ"] = tz_name
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+
+def now_local(config=None):
+    """Current local time (the profile's timezone once apply_profile_timezone ran)."""
     return datetime.now()
 
 
@@ -1513,12 +1522,14 @@ def _closed_session_notice(session, action):
         return
     _CLOSED_NOTICE_SHOWN = True
     at = session.get("closed_at") or "EOD"
-    print(
-        f"notice: today's session was closed at {at}; this change is not in the handoff. "
-        f"To log post-close work, run `wpl session reopen --reason \"...\"`, "
-        f"update the handoff, then `wpl session close`.",
-        file=sys.stderr,
-    )
+    what = "the handoff" if session.get("eod_handoff_written") else "a handoff (none was written)"
+    msg = (f"today's session was closed at {at}; this change is not in {what}. "
+           f"To log post-close work, run `wpl session reopen --reason \"...\"`, "
+           f"update the handoff, then `wpl session close`.")
+    if OUTPUT_FORMAT == "json":
+        print(json.dumps({"notice": msg, "checkpoint": "closed"}), file=sys.stderr)
+    else:
+        print(f"notice: {msg}", file=sys.stderr)
 
 
 def emit_error(msg, **extra):
@@ -1549,6 +1560,9 @@ def cmd_done(args):
     # done anyway, and without this path agents reached for `undo` (#82).
     if task["status"] not in ("in_progress", "pending", "blocked", "deferred"):
         fail(f"{tid(idx)} is {task['status']}, can't mark done.")
+    if task["status"] == "deferred":
+        # Its started_at predates the deferral, so the span isn't the work time.
+        task.pop("started_at", None)
 
     # Echo-check: --as "<title>" must match the target task's title.
     echoed = getattr(args, "as_title", None)
@@ -2665,7 +2679,7 @@ def cmd_session(args):
         if args.without_handoff:
             if not args.reason:
                 fail("--without-handoff needs --reason \"...\" (why there's no handoff today).")
-            handoff_written = False
+            handoff_written = _handoff_written_since(date_str)
         elif _handoff_written_since(date_str, since):
             handoff_written = True
         else:
@@ -2702,6 +2716,9 @@ def cmd_session(args):
             "reason": args.reason,
         })
         session["checkpoint"] = "assembly_complete"
+        # The handoff no longer covers the day; if nobody closes again,
+        # tomorrow's stale handler must backfill rather than skip.
+        session["eod_handoff_written"] = False
         save_session(session)
         render()
         human = (f"\u25b7 session {date_str} reopened at {now.strftime('%H:%M')}: {args.reason}. "
@@ -2712,8 +2729,9 @@ def cmd_session(args):
 
 # ── Profile addenda and authorization scope (#82) ───────────────────
 
-SKILL_NAMES = ("start", "eod", "pickup", "dispatch", "pre-plan", "horizon", "freeze")
-_ADDENDA_KEY_RE = re.compile(r"^(start|eod|pickup|dispatch|pre-plan|horizon|freeze)\b", re.I)
+SKILL_NAMES = ("start", "eod", "pickup", "dispatch", "pre-plan", "horizon")  # freeze is tmux plumbing, no profile rules
+_ADDENDA_KEY_RE = re.compile(
+    r"^[`/]*(?:workplanner:)?(start|eod|pickup|dispatch|pre-plan|horizon)(?![\w-])", re.I)
 
 # One definition, shared with the SessionStart hook's context builder.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -2739,17 +2757,34 @@ def addenda_sections(skill):
     path = _profile_file("runbook_addenda")
     if not path or not path.exists():
         return []
-    text = path.read_text()
-    parts = re.split(r"(?m)^(?=## )", text)
+    # Split on `## ` headings outside fenced code blocks. Text before the
+    # first heading (or a file with no `## ` headings at all) is unkeyed,
+    # so it stays a /start override as it was before sections were keyed.
+    chunks, cur, fenced = [], [], False
+    for line in path.read_text().splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        if not fenced and line.startswith("## ") and cur:
+            chunks.append(cur)
+            cur = []
+        cur.append(line)
+    if cur:
+        chunks.append(cur)
     out = []
-    for part in parts:
-        if not part.startswith("## "):
+    for chunk in chunks:
+        body = "\n".join(chunk).strip()
+        if not body:
             continue
-        heading = part.splitlines()[0][3:].strip()
-        m = _ADDENDA_KEY_RE.match(heading)
+        if chunk[0].startswith("## "):
+            heading = chunk[0][3:].strip()
+            m = _ADDENDA_KEY_RE.match(heading)
+        else:
+            heading, m = "(preamble)", None
+            if not re.search(r"\S", "\n".join(l for l in chunk if not l.startswith("# "))):
+                continue  # only a title line
         key = m.group(1).lower() if m else "start"
         if key == skill:
-            out.append({"heading": heading, "keyed": bool(m), "body": part.rstrip()})
+            out.append({"heading": heading, "keyed": bool(m), "body": body})
     return out
 
 
@@ -2758,8 +2793,14 @@ def cmd_addenda(args):
     if skill not in SKILL_NAMES:
         fail(f"Unknown skill '{skill}'. Use one of: {', '.join(SKILL_NAMES)}.")
     sections = addenda_sections(skill)
+    path = _profile_file("runbook_addenda")
+    missing = bool(path) and not path.exists()
     if OUTPUT_FORMAT == "json":
-        print(json.dumps({"skill": skill, "sections": sections}))
+        print(json.dumps({"skill": skill, "configured": bool(path), "missing": missing,
+                          "sections": sections}))
+        return
+    if missing:
+        print(f"runbook addenda: \u2717 (not found: {path})")
         return
     if not sections:
         print(f"No profile addenda for {skill}.")
@@ -3474,7 +3515,7 @@ def build_parser():
 
     p_addenda = sub.add_parser("addenda", help="Print the profile addenda sections for a skill (#82).")
     p_addenda.add_argument("--for", dest="for_skill", required=True,
-                           help=f"Skill: {', '.join(('start', 'eod', 'pickup', 'dispatch', 'pre-plan', 'horizon', 'freeze'))}.")
+                           help="Skill: start, eod, pickup, dispatch, pre-plan or horizon.")
 
     sub.add_parser("authorization",
                    help="Print the profile's authorization scope (what needs its own yes), or the default (#82).")
@@ -3704,6 +3745,9 @@ def main():
                 profile_name = None
             if profile_name:
                 print(f"(profile: {profile_name} — {resolved_via_human(source)})")
+
+    if args.command not in ("profile",):
+        apply_profile_timezone()
 
     handler = DISPATCH.get(args.command)
     if handler:

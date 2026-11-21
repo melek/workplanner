@@ -114,7 +114,7 @@ Write to `$PROFILE_ROOT/handoffs/dispatch-{uid}.md`, keyed by the task's uid (is
 
 Determine working directory from `$PROFILE_ROOT/config.json` field `working_directory`, or fall back to `$PWD`.
 
-Write launcher to `/tmp/dispatch-t{index+1}.sh`. The launcher must export `WPL_PROFILE` so the child's `wpl` calls inherit the resolved profile, not whatever the child's cwd resolves to (which may be a different workspace tree):
+Write launcher to `/tmp/dispatch-{uid}.sh` (keyed by uid, like the prompt file). The launcher must export `WPL_PROFILE` so the child's `wpl` calls inherit the resolved profile, not whatever the child's cwd resolves to (which may be a different workspace tree):
 
 ```bash
 #!/bin/bash -l
@@ -127,8 +127,8 @@ Interpolate `{PROFILE_NAME}`, `{PERMISSION_MODE}` (resolved above) and `$PROFILE
 
 Launch:
 ```bash
-chmod +x /tmp/dispatch-t{index+1}.sh
-tmux split-window -h -t '{top}' /tmp/dispatch-t{index+1}.sh
+chmod +x /tmp/dispatch-{uid}.sh
+tmux split-window -h -t '{top}' /tmp/dispatch-{uid}.sh
 tmux select-pane -T "t{index+1}"
 ```
 

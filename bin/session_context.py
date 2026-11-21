@@ -59,12 +59,25 @@ def _authorization(root, cfg):
     return DEFAULT_AUTHORIZATION, "default; a profile can set its own with the `authorization` config key"
 
 
-def build(root, source, plugin_root):
-    root = Path(root)
+def _load_config(root):
+    """Profile config with the CLI's user.json fallback for timezone/eod_target."""
     try:
         cfg = json.loads((root / "config.json").read_text())
     except (OSError, ValueError):
         cfg = {}
+    try:
+        user = json.loads((root.resolve().parent.parent / "user.json").read_text())
+    except (OSError, ValueError):
+        user = {}
+    for key in ("timezone", "eod_target"):
+        if not cfg.get(key) and user.get(key):
+            cfg[key] = user[key]
+    return cfg
+
+
+def build(root, source, plugin_root):
+    root = Path(root)
+    cfg = _load_config(root)
     now, tz_label = _now(cfg)
     today = now.date().isoformat()
     lines = [f"Workplanner profile: {root.name} | Now: {now.strftime('%a %d %b %Y %H:%M')} ({tz_label})"]
@@ -82,8 +95,9 @@ def build(root, source, plugin_root):
                      f"Run /workplanner:start to close it out and open today.")
     elif s.get("checkpoint") == "closed":
         at = s.get("closed_at") or "EOD"
-        lines.append(f"  Today's session closed at {at}; the handoff is written. Work done now "
-                     f"isn't in it. To log post-close work: `wpl session reopen --reason \"...\"`, "
+        written = "the handoff is written" if s.get("eod_handoff_written", True) else "no handoff was written"
+        lines.append(f"  Today's session closed at {at}; {written}. Work done now isn't in it. "
+                     f"To log post-close work: `wpl session reopen --reason \"...\"`, "
                      f"then update the handoff and `wpl session close`.")
     else:
         tasks = s.get("tasks", [])

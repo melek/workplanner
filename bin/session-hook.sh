@@ -49,11 +49,19 @@ fi
 # transcript).
 # Read with a short timeout: a hook must never block when stdin is a
 # terminal or an inherited pipe that never closes.
-SOURCE=$(python3 -c 'import json,select,sys
-src = "startup"
+SOURCE=$(python3 -c 'import json,os,select,sys,time
+src, buf, fd = "startup", b"", sys.stdin.fileno()
 try:
-    if not sys.stdin.isatty() and select.select([sys.stdin], [], [], 0.5)[0]:
-        src = json.loads(sys.stdin.read() or "{}").get("source") or "startup"
+    if not os.isatty(fd):
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            if not select.select([fd], [], [], max(0.0, deadline - time.monotonic()))[0]:
+                break
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            buf += chunk
+        src = json.loads(buf or b"{}").get("source") or "startup"
 except Exception:
     pass
 print(src)' 2>/dev/null)

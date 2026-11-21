@@ -208,4 +208,5 @@ class DashboardTUI:
 
 
 if __name__ == "__main__":
+    rd.apply_profile_timezone()  # task times are in the profile timezone (#82)
     DashboardTUI().run()

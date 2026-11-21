@@ -125,7 +125,7 @@ Tomorrow's `/start` Step 0.25 reads this file to carry decisions, defer reasons,
 
 **Idempotent within a session:** If `/eod` is re-run (e.g., after a fix-up), the `--replace` write rewrites *this session's* sub-sections only. Other sessions' contributions are preserved.
 
-**Session-close gate:** Step 4 (close session) only fires if this handoff write succeeded. If `handoff.py write` fails, surface the error, leave the session open, and let the user retry. Set `eod_handoff_written: true` in session state on success.
+**Session-close gate:** Step 4 (close session) only fires if this handoff write succeeded. If `handoff.py write` fails, surface the error, leave the session open, and let the user retry. `wpl session close` (Step 4) checks the handoff file and sets `eod_handoff_written` itself; don't write it by hand.
 
 ### Step 3: Display optional external drafts
 
