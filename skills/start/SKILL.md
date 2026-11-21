@@ -271,7 +271,7 @@ Triggered when `current-session.json` exists but `date` ≠ today.
 
      Log: "Backfilled handoff: {path}".
 
-   No prompt. The backfill is silent recovery — the file IS the handoff artifact, and Step 0.25 below will read it the same way it reads a normal-path handoff written by yesterday's `/eod`.
+   No prompt. The backfill is silent recovery — the file IS the handoff artifact, and Step 0.25 below will read it the same way it reads a normal-path handoff written by the last `/eod`, however many days ago.
 
 3. **No retroactive external posting.** The backfilled handoff from step 2 is the recovery artifact, period. Do not draft or prompt to post a retroactive check-in to any external system (project-management, messaging, or otherwise) on the user's behalf — a missed day that rolls over is a signal to move on, not to retroactively catch up public channels. If the user wants to post something about yesterday, they'll do it themselves.
 
@@ -305,32 +305,26 @@ Create `current-session.json` with the schema from `${CLAUDE_PLUGIN_ROOT}/docs/s
 
 Use atomic writes (tmp file → mv) for ALL state mutations.
 
-### Step 0.25: Read yesterday's handoff doc
+### Step 0.25: Read pending handoffs
 
-Before the inbox sweep, read yesterday's local handoff doc (written by `/eod` the previous day):
+Before the inbox sweep, read every handoff a later session hasn't reviewed yet. This is not just yesterday's: after a weekend, time off or skipped days, the last handoff is still waiting (issue #74).
 
 ```bash
-# Resolve yesterday's date in the profile's timezone (same logic as sweep_since).
-YESTERDAY=$(python3 -c "
-from datetime import timedelta
-import json, os, sys
-sys.path.insert(0, '${CLAUDE_PLUGIN_ROOT}/bin')
-from transition import local_today, load_config
-print((local_today(load_config()) - timedelta(days=1)).isoformat())
-")
-python3 "${CLAUDE_PLUGIN_ROOT}/bin/handoff.py" read --date "$YESTERDAY"
+python3 "${CLAUDE_PLUGIN_ROOT}/bin/handoff.py" pending
 ```
 
-The output is a JSON blob with `sections` (aggregated across all session sub-sections), `deferred` (parsed list of `{title, uid, reason, session}` dicts), and `raw` (the full markdown for fallback).
+The output is `{reviewed_through, count, handoffs: [...]}`, oldest first. Each entry has the same shape as `handoff.py read`: `sections` (aggregated across session sub-sections), `deferred` (parsed `{title, uid, reason, session}` dicts) and `raw`. With no review record yet, only the most recent handoff is returned.
 
-**What to do with it:**
+**What to do with them:**
 
-- **Deferred list** (`.deferred`) feeds the carryover mini-triage (see Step 3 below).
-- **Open questions** → include in the morning headlines so they surface early ("Open from yesterday: <question>").
-- **Context for tomorrow** → treat as LLM-addressed notes to self; read once, apply as pre-conditioning for the day ahead. Optionally surface top items in headlines.
+- **Deferred lists** (`.deferred`) feed the carryover mini-triage (see Step 3 below). When several handoffs are pending, merge them; for the same task, the newest reason wins.
+- **Open questions** → include in the morning headlines so they surface early ("Open from <weekday>: <question>"). Drop ones a later pending handoff resolved.
+- **Context for tomorrow** → treat as LLM-addressed notes to self; read once, apply as pre-conditioning for the day ahead. The newest handoff wins on conflicts; older ones are background. Optionally surface top items in headlines.
 - **Session trajectory** → contextual only; used to inform decisions but not re-shown verbatim in the agenda.
 
-If the file is missing (fresh install, or yesterday's /eod didn't run), proceed with a log line "No handoff for yesterday" and rely on session-JSON carryover as before.
+If `count` is 0 (fresh install, or no `/eod` since the last review), log "No pending handoff" and rely on session-JSON carryover as before.
+
+Don't mark them reviewed here. Step 4 does that once assembly completes, so an interrupted assembly re-reads the same handoffs.
 
 ### Step 0.5: Pre-work activity scan
 
@@ -408,11 +402,15 @@ After triage, **clear `session.inbox_items[]`** to keep session lean. Set checkp
 
 1. Write `session.tasks[]` to state (atomic write)
 2. Set first pending task to `in_progress`, set `current_task_index`
-3. Re-render the dashboard:
+3. Mark the handoffs read in Step 0.25 as reviewed:
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/bin/handoff.py" mark-reviewed
+   ```
+4. Re-render the dashboard:
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/bin/render_dashboard.py"
    ```
-4. Output the agenda:
+5. Output the agenda:
 
 ```
 Morning Assembly — Fri 13 Mar, W11

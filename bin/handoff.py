@@ -28,6 +28,12 @@ CLI surface (used by skills):
     # Print the path for today's handoff (doesn't create it)
     python3 handoff.py path [--date YYYY-MM-DD]
 
+    # Handoffs not yet reviewed by a later session (what /start reads)
+    python3 handoff.py pending
+
+    # Record that handoffs up to a date have been reviewed (default: yesterday)
+    python3 handoff.py mark-reviewed [--through YYYY-MM-DD]
+
 The `write` command only touches this session-id's sub-sections. Sections
 not passed are kept (incremental writes); an explicit empty value clears
 one; `--replace` rewrites this session's contribution in full (what /eod
@@ -248,6 +254,82 @@ def read_handoff(target_date=None):
     return out
 
 
+# ── Review tracking (issue #74) ─────────────────────────────────────
+#
+# A handoff is read by the next session that runs, however long the gap
+# (weekend, time off, skipped days). `.reviewed` in the handoffs dir records
+# the newest date already reviewed; every earlier-than-today handoff after it
+# is pending.
+
+REVIEW_FILE = ".reviewed"
+DATE_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.md$")
+
+
+def _handoffs_dir():
+    return resolve_paths().HANDOFFS
+
+
+def _today_str():
+    return local_today(load_config()).isoformat()[:10]
+
+
+def reviewed_through():
+    """Return the last reviewed date (YYYY-MM-DD), or None if never recorded."""
+    path = _handoffs_dir() / REVIEW_FILE
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    value = data.get("reviewed_through") if isinstance(data, dict) else None
+    return value if isinstance(value, str) and DATE_FILE_RE.match(value + ".md") else None
+
+
+def pending_handoffs(today=None):
+    """Handoffs dated before today and after the last review, oldest first.
+
+    With no review record (fresh install or upgrade), only the most recent
+    handoff before today is returned, so the first run isn't flooded with
+    history.
+    """
+    today = today or _today_str()
+    d = _handoffs_dir()
+    dates = []
+    if d.exists():
+        for f in d.iterdir():
+            m = DATE_FILE_RE.match(f.name)
+            if m and m.group(1) < today:
+                dates.append(m.group(1))
+    dates.sort()
+    since = reviewed_through()
+    if since is None:
+        dates = dates[-1:]
+    else:
+        dates = [x for x in dates if x > since]
+    return [read_handoff(x) for x in dates]
+
+
+def mark_reviewed(through=None):
+    """Record handoffs up to `through` (default: yesterday) as reviewed.
+
+    Never moves the marker backwards. Atomic write.
+    """
+    if through is None:
+        from datetime import timedelta
+        through = (local_today(load_config()) - timedelta(days=1)).isoformat()[:10]
+    through = str(through)[:10]
+    if not DATE_FILE_RE.match(through + ".md"):
+        raise ValueError(f"not an ISO date: {through}")
+    current = reviewed_through()
+    if current and current >= through:
+        return current
+    d = _handoffs_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / (REVIEW_FILE + ".tmp")
+    tmp.write_text(json.dumps({"reviewed_through": through}) + "\n")
+    os.replace(tmp, d / REVIEW_FILE)
+    return through
+
+
 # ── Writing ─────────────────────────────────────────────────────────
 
 
@@ -437,6 +519,21 @@ def _cmd_read(args):
     print(json.dumps(data, indent=2))
 
 
+def _cmd_pending(args):
+    items = pending_handoffs()
+    print(json.dumps({"reviewed_through": reviewed_through(),
+                      "count": len(items),
+                      "handoffs": items}, indent=2))
+
+
+def _cmd_mark_reviewed(args):
+    try:
+        print(mark_reviewed(args.through))
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _cmd_path(args):
     print(str(handoff_path_for(args.date)))
 
@@ -481,6 +578,13 @@ def main():
     p = sub.add_parser("path", help="Print the path of the handoff file.")
     p.add_argument("--date", default=None, help="ISO date (default: today).")
     p.set_defaults(func=_cmd_path)
+
+    pe = sub.add_parser("pending", help="Print handoffs not yet reviewed by a later session (JSON).")
+    pe.set_defaults(func=_cmd_pending)
+
+    mr = sub.add_parser("mark-reviewed", help="Record handoffs up to a date as reviewed.")
+    mr.add_argument("--through", default=None, help="ISO date (default: yesterday).")
+    mr.set_defaults(func=_cmd_mark_reviewed)
 
     args = parser.parse_args()
     # Propagate --profile into transition.py's module-level override so

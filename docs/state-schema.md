@@ -234,7 +234,11 @@ The file is read and written through `bin/handoff.py`. Skills never edit it dire
 python3 bin/handoff.py write --trajectory "..." --deferred-json '[{...}]' --open-questions "..." --context "..."
 python3 bin/handoff.py read [--date YYYY-MM-DD]    # prints JSON with {path, date, exists, sections, deferred, raw}
 python3 bin/handoff.py path [--date YYYY-MM-DD]    # prints the resolved path
+python3 bin/handoff.py pending                     # unreviewed handoffs before today, oldest first: {reviewed_through, count, handoffs}
+python3 bin/handoff.py mark-reviewed [--through YYYY-MM-DD]   # default: yesterday; never moves back
 ```
+
+Review state lives in `handoffs/.reviewed` (`{"reviewed_through": "YYYY-MM-DD"}`). `/start` reads `pending` at Step 0.25 and calls `mark-reviewed` once assembly completes, so a handoff is read by the next session however long the gap. With no `.reviewed` file, `pending` returns only the most recent handoff.
 
 `write` only ever touches this session-id's sub-sections. Sections not passed are kept, so a session can write in several passes; an explicit empty value (e.g. `--context ""`) clears one; `--replace` makes the write a full rewrite of this session's sub-sections (what `/eod` uses). Other sessions' sub-sections and unrecognised `## ...` sections (e.g., human free-text additions) are preserved verbatim.
 

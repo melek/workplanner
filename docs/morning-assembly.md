@@ -36,15 +36,15 @@ Compute `sweep_since` from previous session:
 - If no previous session: use yesterday 08:00 in `config.timezone`
 - Store as `session.sweep_since` (ISO 8601)
 
-### Step 0.25: Read yesterday's handoff doc
+### Step 0.25: Read pending handoffs
 
-Before any inbox scanning, read yesterday's local handoff (`~/.workplanner/profiles/<name>/handoffs/YYYY-MM-DD.md`) via `bin/handoff.py read --date <yesterday>`. Aggregates across session sub-sections. Feeds into:
+Before any inbox scanning, read every handoff not yet reviewed by a later session via `bin/handoff.py pending` (oldest first; each entry has the `read` shape). A handoff waits for the next session however long the gap: a weekend, time off, skipped days (issue #74). With no review record yet, only the most recent handoff is returned. Feeds into:
 
-- **Carryover mini-triage** in Step 3 (below) — each deferred task's `defer_reason` is surfaced inline so "does this still matter?" has context.
-- **Headlines** — "Open questions" from yesterday become session-start headlines.
-- **Pre-conditioning** — "Context for tomorrow" notes are read once before the day's planning.
+- **Carryover mini-triage** in Step 3 (below) — each deferred task's `defer_reason` is surfaced inline so "does this still matter?" has context. Across several handoffs, the newest reason wins.
+- **Headlines** — open questions from the pending handoffs become session-start headlines.
+- **Pre-conditioning** — "Context for tomorrow" notes are read once before the day's planning; the newest handoff wins on conflicts.
 
-If the file is absent (fresh install, or yesterday's `/eod` skipped), log "No handoff for yesterday" and fall back to session-JSON carryover (status + deferral_count only, no reasons).
+If none is pending (fresh install, or no `/eod` since the last review), log "No pending handoff" and fall back to session-JSON carryover (status + deferral_count only, no reasons). Step 4 marks them reviewed (`handoff.py mark-reviewed`) once assembly completes.
 
 ### Step 0.5: Pre-work activity scan
 
@@ -95,7 +95,7 @@ Transform `session.inbox_items[]` into `session.tasks[]`.
 
 1. **Deduplicate** — Match by `dedupe_key` (Linear ref or normalized URL). Merge: keep highest priority, combine context
 2. **Triage & Prioritize** — Assign priority tiers, apply timebox estimates
-3. **Carryover mini-triage** — For each carryover task, surface its `defer_reason` (from yesterday's handoff + task state) and ask "keep / defer / drop / backlog / re-scope?". Items at `deferral_count >= config.triage.deferrals.reckoning_threshold` escalate to the full reckoning prompt. Full details: `skills/start/SKILL.md` Step 3.
+3. **Carryover mini-triage** — For each carryover task, surface its `defer_reason` (from the pending handoffs + task state) and ask "keep / defer / drop / backlog / re-scope?". Items at `deferral_count >= config.triage.deferrals.reckoning_threshold` escalate to the full reckoning prompt. Full details: `skills/start/SKILL.md` Step 3.
 4. **Filter for Today** — Always include carryover/critical/high/overdue/due-today. Medium if budget allows. Cap at 10 tasks.
 5. **Order** — Carryover → Critical → High (due-today first) → Medium → Focus/check-in
 6. **Insert Time Structure** — Protected blocks + calendar events. Compute budget.
@@ -114,6 +114,7 @@ After triage, **clear `session.inbox_items[]`** to keep session JSON lean. The d
 
 1. Write `session.tasks[]` to state (atomic write)
 2. Set first pending task to `in_progress`, set `current_task_index`
+3. Mark the handoffs read in Step 0.25 as reviewed: `bin/handoff.py mark-reviewed`
 3. Re-render dashboard:
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/bin/render_dashboard.py"
