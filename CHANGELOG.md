@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Backlog items with only `not_before` come back** (issue #70). They were never promoted (the `/start` sweep needed a `target_date`) and were flagged stale after 14 days as if undated. An item's surfacing date is now `target_date`, or `not_before` when there's no target: `/start` promotes it on that day and `/horizon` groups it as Upcoming or Scheduled. `backlog --list` shows `not before` dates and flags only undated items as stale, and adding an item with only `--not-before` says when it surfaces. Regression suite: `bin/test_issue_70.py`.
+
 ## 1.0.0-beta.9
 
 Handoff and hook release: issues #64, #65, #66, #69 and #74 (PRs #75–#78).

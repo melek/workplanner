@@ -25,7 +25,7 @@ PROFILE_ROOT=$(wpl profile whoami --print-root)
 `$ARGUMENTS`
 
 - Empty → full review (all groups)
-- `upcoming` → items with target_date or deadline within 7 days
+- `upcoming` → items with a surfacing date or deadline within 7 days
 - `stale` → items older than 14 days with no dates
 - `tag <name>` → filter by tag
 
@@ -41,14 +41,16 @@ Also read `$PROFILE_ROOT/backlog.json` directly for full field access (target_da
 
 ### Step 2: Group items
 
-Categorize each item into one of four groups based on dates and age:
+Categorize each item into one of four groups based on dates and age. An item's **surfacing date** is `target_date`, or `not_before` when there is no `target_date` (issue #70); it's the day morning assembly promotes the item.
 
 | Group | Criteria | Display |
 |-------|----------|---------|
-| **Upcoming** | `target_date` or `deadline` within 7 days | Sorted by nearest date first. Show days until due. |
-| **Scheduled** | `target_date` set but >7 days out | Sorted by target_date. |
-| **Open** | No dates, created <14 days ago | Sorted by created_at (newest first). |
-| **Stale** | No dates, created ≥14 days ago | Sorted by age (oldest first). Show age in days. |
+| **Upcoming** | Surfacing date or `deadline` within 7 days | Sorted by nearest date first. Show days until due. |
+| **Scheduled** | Surfacing date set but >7 days out | Sorted by surfacing date. |
+| **Open** | No `target_date`, `not_before` or `deadline`; created <14 days ago | Sorted by created_at (newest first). |
+| **Stale** | No `target_date`, `not_before` or `deadline`; created ≥14 days ago | Sorted by age (oldest first). Show age in days. |
+
+An item with any of those dates is never Open or Stale: it's waiting for its date on purpose.
 
 If an argument filters to a specific group, only show that group.
 
@@ -129,5 +131,5 @@ Actions: {N} promoted, {N} rescheduled, {N} dropped
 
 - The backlog is profile-scoped — stored at `$PROFILE_ROOT/backlog.json` (each profile has its own)
 - Items enter the backlog via `transition.py backlog "title"`, `transition.py backlog --from t5`, or `transition.py defer --until friday`
-- Morning assembly auto-promotes items whose `target_date` or `deadline` is today or past
+- Morning assembly auto-promotes items whose surfacing date (`target_date`, else `not_before`) is today or past, and items whose `deadline` is 2 days away or past
 - All mutations go through `transition.py` and are in the undo log
