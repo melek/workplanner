@@ -149,6 +149,9 @@ EOD-RULE
 
 ## pickup — brief format
 PICKUP-RULE
+
+## EOD Step 3b — standup draft
+EOD-STEP-RULE
 """
 
 
@@ -170,7 +173,7 @@ def test_addenda_partition_by_skill():
         pickup = c.ok("addenda", "--for", "pickup")
         horizon = c.ok("addenda", "--for", "horizon")
         assert "START-RULE" in start and "EOD-RULE" not in start, start
-        assert "EOD-RULE" in eod and "START-RULE" not in eod, eod
+        assert "EOD-RULE" in eod and "EOD-STEP-RULE" in eod and "START-RULE" not in eod, eod
         assert "PICKUP-RULE" in pickup, pickup
         assert "No profile addenda for horizon" in horizon, horizon
         rc, _, err = c.run("addenda", "--for", "nope")

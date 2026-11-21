@@ -2713,7 +2713,7 @@ def cmd_session(args):
 # ── Profile addenda and authorization scope (#82) ───────────────────
 
 SKILL_NAMES = ("start", "eod", "pickup", "dispatch", "pre-plan", "horizon", "freeze")
-_ADDENDA_KEY_RE = re.compile(r"^(start|eod|pickup|dispatch|pre-plan|horizon|freeze)\b\s*[:\u2014\-]", re.I)
+_ADDENDA_KEY_RE = re.compile(r"^(start|eod|pickup|dispatch|pre-plan|horizon|freeze)\b", re.I)
 
 # One definition, shared with the SessionStart hook's context builder.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -2731,8 +2731,8 @@ def _profile_file(config_key):
 def addenda_sections(skill):
     """Sections of the profile's runbook addenda that apply to `skill`.
 
-    A `## ` heading that starts with a skill name followed by `:` or a
-    dash (`## eod: commit the workspace`) is keyed to that skill.
+    A `## ` heading that starts with a skill name (`## eod: commit the
+    workspace`, `## EOD Step 3b — standup draft`) is keyed to that skill.
     Unkeyed sections keep their original meaning: inbox-runbook
     overrides for `/start`.
     """
