@@ -332,7 +332,7 @@ Uses the same base fields as a session task, plus temporal targeting fields.
 | `notes` | `string` \| null | no | Free-text notes. |
 | `created_at` | `string` (ISO date) | yes | Date the item was added. Drives staleness detection. |
 | `target_date` | `string` (ISO date) \| null | no | "Surface on this date." Auto-promotes to inbox during morning assembly. |
-| `not_before` | `string` (ISO date) \| null | no | "Don't surface until this date." Suppresses auto-promotion. |
+| `not_before` | `string` (ISO date) \| null | no | "Don't surface until this date." With a `target_date`, holds promotion until both dates pass. Without one, it is the surfacing date: the item comes back on that day (issue #70). |
 | `deadline` | `string` (ISO date) \| null | no | Hard deadline. Drives urgency warnings and auto-promotion when ≤2 days away. |
 | `tags` | `array` of `string` | no | Lightweight categorization for filtering in `/horizon`. |
 | `defer_reason` | `string` | no | Preserved when a deferred session task is sent to the backlog; carried back to the promoted session task on `backlog --promote`. |
@@ -342,10 +342,10 @@ Uses the same base fields as a session task, plus temporal targeting fields.
 
 | Tier | Condition | Action |
 |------|-----------|--------|
-| Auto-promote | `target_date <= today` (and `not_before` satisfied) | Added to `inbox_items[]` with `source: "backlog"`, `priority: "high"`. Removed from backlog. |
+| Auto-promote | Surfacing date `<= today`: `target_date`, or `not_before` when there's no `target_date` (and `not_before` satisfied when both are set) | Added to `inbox_items[]` with `source: "backlog"`, `priority: "high"`. Removed from backlog. |
 | Urgency auto-promote | `deadline` ≤2 days away, no `target_date` | Added with `priority: "critical"`. Removed from backlog. |
 | Awareness | `deadline` 3-7 days away | Shown in agenda "Backlog awareness" footer. |
-| Passive | No dates | Only visible via `backlog --list` or `/horizon`. |
+| Passive | No `target_date`, `not_before` or `deadline` | Only visible via `backlog --list` or `/horizon`; flagged stale after 14 days. |
 
 ### CLI reference
 

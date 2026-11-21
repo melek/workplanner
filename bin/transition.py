@@ -2073,6 +2073,16 @@ def cmd_dispatch(args):
                   config=load_config(), human_line=human)
 
 
+def backlog_surface_date(item):
+    """The date a backlog item comes back on its own, or None (issue #70).
+
+    `target_date` if set; otherwise `not_before`, so an item filed with only
+    "not before X" surfaces on X instead of never. `deadline` surfaces
+    separately (2-day lead) and isn't a surfacing date here.
+    """
+    return item.get("target_date") or item.get("not_before") or None
+
+
 def _move_task_to_backlog(session, idx, target_date=None, not_before=None, deadline=None, tags=None):
     """Move a session task to the backlog. Handles session state cleanup."""
     tasks = session.get("tasks", [])
@@ -2216,6 +2226,8 @@ def _backlog_add(args):
     date_info = []
     if target_date:
         date_info.append(f"target: {target_date}")
+    if not_before:
+        date_info.append(f"not before: {not_before}" + ("" if target_date else ", surfaces then"))
     if bl_deadline:
         date_info.append(f"deadline: {bl_deadline}")
     date_str = f" ({', '.join(date_info)})" if date_info else ""
@@ -2285,10 +2297,13 @@ def _backlog_list(args):
         # Date info
         parts = []
         target = item.get("target_date")
+        not_before = item.get("not_before")
         deadline = item.get("deadline")
         created = item.get("created_at")
         if target:
             parts.append(f"target: {target}")
+        if not_before:
+            parts.append(f"not before: {not_before}" + ("" if target else ", surfaces then"))
         if deadline:
             try:
                 dl = datetime.strptime(deadline, "%Y-%m-%d").date()
@@ -2303,7 +2318,9 @@ def _backlog_list(args):
                     parts.append(f"deadline: {deadline}")
             except ValueError:
                 parts.append(f"deadline: {deadline}")
-        if created:
+        # Staleness is for undated items only: one waiting for its date is
+        # waiting on purpose (#70).
+        if created and not backlog_surface_date(item) and not deadline:
             try:
                 cd = datetime.strptime(created, "%Y-%m-%d").date()
                 age = (today - cd).days

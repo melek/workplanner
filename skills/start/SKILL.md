@@ -350,10 +350,10 @@ The scan produces a **headline only**. It does not insert a synthetic "Morning c
 Execute all 9 runbooks sequentially per `${CLAUDE_PLUGIN_ROOT}/docs/inbox-runbooks.md`:
 
 0. **Backlog sweep** — Read `$PROFILE_ROOT/backlog.json`. Auto-promote items to `inbox_items[]`:
-   - Items with `target_date <= today` (and `not_before` is null or `<= today`): add with `source: "backlog"`, `priority: "high"`. Remove from backlog.json after promotion.
+   - Items whose **surfacing date** is `<= today`: add with `source: "backlog"`, `priority: "high"`. Remove from backlog.json after promotion. The surfacing date is `target_date`, or `not_before` when there is no `target_date` (issue #70: an item filed with only "not before X" comes back on X). When both are set, both must be `<= today`.
    - Items with `deadline` and no `target_date`: if deadline is ≤2 days away, add with `source: "backlog"`, `priority: "critical"`, `overdue: true` if past. Remove from backlog.json.
    - Items with `deadline` 3-7 days out: include in "Backlog awareness" footer (see agenda format below), not promoted.
-   - Undated items: skip (only surface via `/horizon` review).
+   - Items with no `target_date`, `not_before` or `deadline`: skip (only surface via `/horizon` review).
 1. **Digest** — Check/generate digest, parse priority-tiered action items
 2. **Linear Issues** — Assigned issues in active states across `config.linear_teams`
 3. **Linear Inbox** — Notifications/mentions via context MCP
