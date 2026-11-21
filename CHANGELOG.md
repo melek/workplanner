@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.0-beta.9
+
+Handoff and hook release: issues #64, #65, #66, #69 and #74 (PRs #75–#78).
 
 ### Added
 
