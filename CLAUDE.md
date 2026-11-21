@@ -66,7 +66,7 @@ Track bugs and features via **GitHub Issues** (https://github.com/melek/workplan
 
 1. `current-session.json` is the single source of truth. Dashboard and agenda are derived.
 2. During the day, mutate state only through `bin/transition.py` (the `wpl` CLI).
-3. During assembly (`/start`) and EOD (`/eod`), skills write JSON directly with atomic writes.
+3. During assembly (`/start`), the skill writes JSON directly with atomic writes. Closing and reopening the day use `wpl session close|reopen` (#82).
 4. Task IDs (`t1`, `t2`, ...) are positional — derived from array index, not stored.
 5. All integrations are optional. Graceful degradation everywhere.
 6. Deterministic plumbing, flexible policy — engine enforces structure, LLM handles judgment.

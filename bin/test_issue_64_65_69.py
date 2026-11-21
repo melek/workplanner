@@ -36,7 +36,7 @@ def _hook(c, command):
 
 
 def test_64_hint_is_a_fallback():
-    text = SESSION_HOOK.read_text()
+    text = (SESSION_HOOK.parent / "session_context.py").read_text()  # hint moved there in #82
     assert "add ~/.workplanner/bin to PATH" not in text
     assert "if it is not found, call ~/.workplanner/bin/wpl" in text
 

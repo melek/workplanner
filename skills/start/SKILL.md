@@ -104,7 +104,7 @@ The pre-flight verifies the integrations the user's profile actually uses. Do **
 1. Inspect the active profile's `config.json` to enumerate the integrations the morning assembly will touch (e.g. project-management, messaging, email, calendar, organizational-context). Each declared integration corresponds to one or more runbooks in `docs/inbox-runbooks.md`.
 2. For each integration, load the tool schemas needed to exercise it (via `ToolSearch` with whatever selectors match the user's available MCPs), then perform a minimal round-trip that exercises auth and basic reachability — the cheapest call available that proves the integration is usable.
 3. Record the result as `✓` or `✗ (reason)` per integration. Failures are non-blocking; runbooks already handle graceful degradation.
-4. If `config.runbook_addenda` is set, read `$PROFILE_ROOT/<runbook_addenda>`. Its rules override the matching steps in `docs/inbox-runbooks.md` for this profile; apply them at those steps for the rest of assembly. If the file is missing, report `runbook addenda: ✗ (not found)` and continue with the base runbooks.
+4. Run `python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" addenda --for start`. It prints the profile's addenda sections for `/start`: sections keyed `## start: …` plus every unkeyed section (the original inbox-runbook overrides). Their rules override the matching steps in `docs/inbox-runbooks.md` for this profile; apply them at those steps for the rest of assembly. Sections keyed to other skills (`## eod: …`) are read by those skills, not here (issue #82). If `config.runbook_addenda` is set but the file is missing, report `runbook addenda: ✗ (not found)` and continue with the base runbooks.
 
 ### Report
 
@@ -479,7 +479,7 @@ wpl status
 
 **Parent/child for project work.** When a task rolls up several related sub-steps that share context and a single gate (an RSM milestone, a PR checklist, an incident response), create a parent and add the sub-steps with `--parent <id>` rather than as flat siblings. The dashboard renders them as a tree. Flat siblings still read better for a normal day's mixed-topic agenda.
 
-**During the day, always use `wpl`** (or `~/.workplanner/bin/wpl`) for task state changes — it handles atomic writes, validation, and re-rendering. During assembly and EOD, write JSON directly with atomic writes (tmp → mv).
+**During the day, always use `wpl`** (or `~/.workplanner/bin/wpl`) for task state changes — it handles atomic writes, validation, and re-rendering. During assembly, write JSON directly with atomic writes (tmp → mv). EOD closes the day with `wpl session close` (issue #82).
 
 ## Error Handling
 

@@ -71,6 +71,10 @@ lines.append(
         s.get("eod_target", "?"),
     )
 )
+# A closed session looks open everywhere except the dashboard without this
+# marker (issue #82).
+if s.get("checkpoint") == "closed":
+    lines[-1] += " | CLOSED (work now is not in the handoff)"
 
 cur = s.get("current_task")
 if cur:

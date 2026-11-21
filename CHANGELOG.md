@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+Ergonomics pass (issue #82), from four weeks of use and three framework reviews (executive-assistant practice, Safety-II/STPA, context engineering).
+
+### Added
+
+- **`wpl session close` / `wpl session reopen --reason`.** Close refuses unless the day's handoff file has content (`--without-handoff --reason` for an explicit exception), sets `checkpoint`, `eod_handoff_written` and `closed_at`, and is undo-snapshotted. Reopen records why and requires the handoff to be updated before the next close. `/eod` Step 4 uses it instead of a hand edit of the session JSON.
+- **Closed is visible.** Mutations on a closed session still apply, with a one-line notice that the handoff is already written. `status` shows `| CLOSED HH:MM`, and so do both hooks.
+- **Authorization scope.** A default rule ("a yes covers only what it names; outward-facing or hard-to-reverse actions each need their own yes") and an optional profile file (config key `authorization`), delivered by the SessionStart hook, copied into `/dispatch` prompts, and listed under **Needs its own yes** in `/pickup` briefs. `wpl authorization` prints it. No blocking hook.
+- **Addenda for every skill.** A `## ` section whose heading starts with a skill name (`## eod: …`) applies to that skill; unkeyed text stays a `/start` override. `wpl addenda --for <skill>` prints the matching sections, and `/start`, `/eod`, `/pickup`, `/dispatch`, `/pre-plan` and `/horizon` read theirs in their first step.
+- **SessionStart context.** A `Now:` line in the profile timezone; one line each when today's session is closed, stale or missing; the authorization scope. Logic moved to `bin/session_context.py`.
+
+### Changed
+
+- **No `active`-symlink fallback in the SessionStart hook.** It injected one profile's plan into sessions in unrelated directories. The CLI's single-profile fallback still covers one-profile setups; a profile with declared workspaces gets no context in other directories.
+- **Methodology pointer trimmed and skipped on `resume`.** The blanket "cite at least one principle" demand is gone (followed in under 1% of replies, repeated on every resume and compaction).
+- **Each process runs in the profile timezone.** `started_at`, `actual_min`, the dashboard and log timestamps now agree with `local_today()` when the system timezone differs from the profile's.
+- **Dispatch prompt and launcher files are keyed by uid** (`handoffs/dispatch-<uid>.md`), not by the positional `t<N>`.
+
+### Fixed
+
+- **`wpl done` accepts a deferred task** (no measured time, since its start predates the deferral).
+
+Regression suite: `bin/test_issue_82.py`.
+
 ## 1.0.0-beta.10
 
 Backlog surfacing fix: issue #70 (PR #80).

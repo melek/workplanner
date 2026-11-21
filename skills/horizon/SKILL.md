@@ -31,6 +31,14 @@ PROFILE_ROOT=$(wpl profile whoami --print-root)
 
 ## Procedure
 
+### Step 0: Profile addenda
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/bin/transition.py" addenda --for horizon
+```
+
+Sections it prints are this profile's overrides for `/horizon` (issue #82). Apply each one at the step it names, in place of the default behavior described here. "No profile addenda for horizon." means there are none.
+
 ### Step 1: Load backlog
 
 ```bash

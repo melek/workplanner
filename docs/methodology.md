@@ -65,6 +65,16 @@ The methodology specifically addresses executive function challenges:
 - **Completion momentum:** Small tasks (5-15m) are included early in the agenda to build momentum. The timebox philosophy means even large tasks have a "completable" increment.
 - **Shame-free deferral:** Deferring is a first-class action, not a failure. The reckoning mechanism is constructive ("let's figure out what to do with this") not punitive.
 
+## Authorization scope
+
+The principles above shape the day. This section covers the boundary of the role inside it: what the agent may do on its own, and what needs the user's yes. It is the executive-assistant rule of completed staff work: brief first, and act on the answer.
+
+**Default rule** (delivered at every session start; issue #82):
+
+> A yes covers only what it names. Outward-facing or hard-to-reverse actions (posting, publishing, merging, pushing, writes to shared systems, deleting) each need their own yes, asked one at a time. A general "do it" after a list covers only the items that were plainly proposed for doing now; when in doubt, ask. Work outside the profile's workspaces is a context switch: say so first.
+
+A profile can replace it with its own file (config key `authorization`): for example, standing permissions ("local notes and commits in this workspace need no brief") or extra gates ("never post to shared channels; draft them"). The plugin delivers the text; it doesn't enforce it with blocking hooks. The judgment stays with the agent, which is principle #6 again: deterministic plumbing (the scope always reaches the agent), flexible policy (the user writes it).
+
 ## Customization
 
 The methodology is modified conversationally through the workplanner. The user says what they want; the workplanner changes config and records the decision in the decision log.

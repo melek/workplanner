@@ -10,6 +10,7 @@ Python 3.9+ stdlib only.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -264,6 +265,25 @@ def _first_run_prompt(cwd):
         return target
     else:
         return None
+
+
+def _quiet_profile_root():
+    """Resolution steps 1–3 only: no prompt, no error output (#82).
+
+    For best-effort lookups that must not change what a command prints,
+    such as applying the profile timezone before the command runs.
+    Returns None where resolve_profile_root() would prompt or fail.
+    """
+    override = PROFILE_OVERRIDE or os.environ.get("WPL_PROFILE", "").strip() or None
+    if override:
+        return _find_profile_by_name(override)
+    matched, _ws = _resolve_by_cwd(_normalize_path(os.getcwd()))
+    if matched is not None:
+        return matched
+    all_profiles = list(_iter_profile_dirs())
+    if len(all_profiles) == 1 and not _profile_workspaces(all_profiles[0]):
+        return all_profiles[0]
+    return None
 
 
 def resolve_profile_root():
@@ -813,8 +833,49 @@ def fail(msg, **extra):
     emit_error(msg, **extra)
 
 
+def apply_profile_timezone():
+    """Run this process in the profile's timezone (#82).
+
+    `local_today()` dates things in `config.timezone`, while clock times
+    (`started_at`, `actual_min`, the dashboard's "now", log timestamps)
+    came from the system clock. When the two differ (travel, a home-zone
+    profile on a remote machine) a task could land on the wrong day and
+    elapsed times were off by the offset. Setting TZ once makes every
+    naive `datetime.now()` in this process, and in the dashboard
+    subprocess that inherits the environment, agree. No-op when the
+    profile has no timezone or can't be resolved.
+    """
+    root = _quiet_profile_root()
+    if root is None:
+        return
+    try:
+        cfg = json.loads((root / "config.json").read_text())
+    except (OSError, ValueError):
+        cfg = {}
+    tz_name = cfg.get("timezone")
+    if not tz_name:
+        try:
+            tz_name = json.loads((WPL_ROOT / "user.json").read_text()).get("timezone")
+        except (OSError, ValueError, AttributeError):
+            tz_name = None
+    if not tz_name:
+        return
+    try:
+        ZoneInfo(tz_name)
+    except Exception:
+        return
+    os.environ["TZ"] = tz_name
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+
+def now_local(config=None):
+    """Current local time (the profile's timezone once apply_profile_timezone ran)."""
+    return datetime.now()
+
+
 def now_hhmm():
-    return datetime.now().strftime("%H:%M")
+    return now_local().strftime("%H:%M")
 
 
 def current_task(session):
@@ -1125,6 +1186,15 @@ def done_summary(tasks):
 
 
 def status_line(session, config=None):
+    """Build the one-line status string, marked CLOSED after `session close` (#82)."""
+    line = _status_line_core(session, config)
+    if session.get("checkpoint") == "closed":
+        at = session.get("closed_at")
+        line += f" | CLOSED{(' ' + at) if at else ''}"
+    return line
+
+
+def _status_line_core(session, config=None):
     """Build the one-line status string."""
     tasks = session.get("tasks", [])
     idx, task = current_task(session)
@@ -1434,6 +1504,7 @@ def emit_mutation(action, session, affected=None, config=None, human_line=None):
     in text mode.
     """
     log_mutation(action, affected)
+    _closed_session_notice(session, action)
     if OUTPUT_FORMAT == "json":
         try:
             profile_name = resolve_paths().PROFILE_NAME
@@ -1462,6 +1533,33 @@ def emit_mutation(action, session, affected=None, config=None, human_line=None):
     print_task_list(session, config)
 
 
+_CLOSED_NOTICE_SHOWN = False
+
+
+def _closed_session_notice(session, action):
+    """One stderr line when a mutation lands on a closed session (#82).
+
+    Post-EOD work is legitimate, so the change goes through. But the
+    handoff and any drafts were written at close, so say so once per
+    process instead of letting the change land silently.
+    """
+    global _CLOSED_NOTICE_SHOWN
+    if _CLOSED_NOTICE_SHOWN or action.startswith("session"):
+        return
+    if (session or {}).get("checkpoint") != "closed":
+        return
+    _CLOSED_NOTICE_SHOWN = True
+    at = session.get("closed_at") or "EOD"
+    what = "the handoff" if session.get("eod_handoff_written") else "a handoff (none was written)"
+    msg = (f"today's session was closed at {at}; this change is not in {what}. "
+           f"To log post-close work, run `wpl session reopen --reason \"...\"`, "
+           f"update the handoff, then `wpl session close`.")
+    if OUTPUT_FORMAT == "json":
+        print(json.dumps({"notice": msg, "checkpoint": "closed"}), file=sys.stderr)
+    else:
+        print(f"notice: {msg}", file=sys.stderr)
+
+
 def emit_error(msg, **extra):
     """Emit an error — text to stderr or JSON to stderr, then exit 1."""
     if OUTPUT_FORMAT == "json":
@@ -1486,8 +1584,13 @@ def _title_matches(actual, echoed):
 def cmd_done(args):
     session = load_session()
     idx, task = advance_target(session, args.target)
-    if task["status"] not in ("in_progress", "pending", "blocked"):
+    # `deferred` is accepted too: work deferred in the morning often gets
+    # done anyway, and without this path agents reached for `undo` (#82).
+    if task["status"] not in ("in_progress", "pending", "blocked", "deferred"):
         fail(f"{tid(idx)} is {task['status']}, can't mark done.")
+    if task["status"] == "deferred":
+        # Its started_at predates the deferral, so the span isn't the work time.
+        task.pop("started_at", None)
 
     # Echo-check: --as "<title>" must match the target task's title.
     echoed = getattr(args, "as_title", None)
@@ -2567,6 +2670,192 @@ def cmd_reckon(args):
         fail(f"Unknown reckoning choice: {choice}. Use b/d/x/t/k.")
 
 
+# ── Session lifecycle (#82) ─────────────────────────────────────────
+
+
+def _handoff_written_since(date_str, since_iso=None):
+    """True when the date's handoff has section content (and, with
+    `since_iso`, was modified after that time). Deterministic gate for
+    `session close`, replacing the agent's own say-so."""
+    path = resolve_paths().HANDOFFS / f"{date_str}.md"
+    if not path.exists():
+        return False
+    body = [l for l in path.read_text().splitlines()
+            if l.strip() and not l.lstrip().startswith("#")]
+    if not body:
+        return False
+    if since_iso:
+        try:
+            since = datetime.fromisoformat(since_iso).timestamp()
+        except ValueError:
+            return True
+        return path.stat().st_mtime >= since
+    return True
+
+
+def cmd_session(args):
+    session = load_session()
+    config = load_config()
+    date_str = session.get("date") or local_today(config).isoformat()
+    now = now_local(config)
+
+    if args.session_action == "close":
+        if session.get("checkpoint") == "closed":
+            fail(f"Session {date_str} is already closed (at {session.get('closed_at', '?')}).")
+        reopens = session.get("reopened") or []
+        since = reopens[-1].get("at_iso") if reopens else None
+        if args.without_handoff:
+            if not args.reason:
+                fail("--without-handoff needs --reason \"...\" (why there's no handoff today).")
+            handoff_written = _handoff_written_since(date_str)
+        elif _handoff_written_since(date_str, since):
+            handoff_written = True
+        else:
+            what = "since the session was reopened" if since else f"for {date_str}"
+            fail(
+                f"No handoff written {what}. Write it first "
+                f"(handoff.py write --replace --from-json -), then close. "
+                f"To close without one, pass --without-handoff --reason \"...\".",
+                next_action="handoff.py write",
+            )
+        open_tasks = [tid(i) for i, t in enumerate(session.get("tasks", []))
+                      if t.get("status") in ("in_progress", "pending")]
+        session["checkpoint"] = "closed"
+        session["eod_handoff_written"] = handoff_written
+        session["closed_at"] = now.strftime("%H:%M")
+        if args.reason:
+            session["close_reason"] = args.reason
+        save_session(session)
+        render()
+        human = f"\u25a0 session {date_str} closed at {session['closed_at']}" + \
+            ("" if handoff_written else " (no handoff: " + args.reason + ")")
+        if open_tasks:
+            human += f". Still open: {', '.join(open_tasks)} (they carry over tomorrow)"
+        emit_mutation("session:close", session, affected=[], config=config, human_line=human + ".")
+        return
+
+    if args.session_action == "reopen":
+        if session.get("checkpoint") != "closed":
+            fail(f"Session {date_str} isn't closed (checkpoint: {session.get('checkpoint')}).")
+        if not args.reason:
+            fail("reopen needs --reason \"...\" (what the post-close work is).")
+        session.setdefault("reopened", []).append({
+            "at": now.strftime("%H:%M"), "at_iso": now.isoformat(timespec="seconds"),
+            "reason": args.reason,
+        })
+        session["checkpoint"] = "assembly_complete"
+        # The handoff no longer covers the day; if nobody closes again,
+        # tomorrow's stale handler must backfill rather than skip.
+        session["eod_handoff_written"] = False
+        save_session(session)
+        render()
+        human = (f"\u25b7 session {date_str} reopened at {now.strftime('%H:%M')}: {args.reason}. "
+                 f"Log the work, update the handoff, then `wpl session close`.")
+        emit_mutation("session:reopen", session, affected=[], config=config, human_line=human)
+        return
+
+
+# ── Profile addenda and authorization scope (#82) ───────────────────
+
+SKILL_NAMES = ("start", "eod", "pickup", "dispatch", "pre-plan", "horizon")  # freeze is tmux plumbing, no profile rules
+_ADDENDA_KEY_RE = re.compile(
+    r"^[`/]*(?:workplanner:)?(start|eod|pickup|dispatch|pre-plan|horizon)(?![\w-])", re.I)
+
+# One definition, shared with the SessionStart hook's context builder.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from session_context import DEFAULT_AUTHORIZATION  # noqa: E402
+
+
+def _profile_file(config_key):
+    """Path of a profile-relative file named in config, or None."""
+    rel = (load_config() or {}).get(config_key)
+    if not rel:
+        return None
+    return resolve_paths().PROFILE_ROOT / rel
+
+
+def addenda_sections(skill):
+    """Sections of the profile's runbook addenda that apply to `skill`.
+
+    A `## ` heading that starts with a skill name (`## eod: commit the
+    workspace`, `## EOD Step 3b — standup draft`) is keyed to that skill.
+    Unkeyed sections keep their original meaning: inbox-runbook
+    overrides for `/start`.
+    """
+    path = _profile_file("runbook_addenda")
+    if not path or not path.exists():
+        return []
+    # Split on `## ` headings outside fenced code blocks. Text before the
+    # first heading (or a file with no `## ` headings at all) is unkeyed,
+    # so it stays a /start override as it was before sections were keyed.
+    chunks, cur, fenced = [], [], False
+    for line in path.read_text().splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        if not fenced and line.startswith("## ") and cur:
+            chunks.append(cur)
+            cur = []
+        cur.append(line)
+    if cur:
+        chunks.append(cur)
+    out = []
+    for chunk in chunks:
+        body = "\n".join(chunk).strip()
+        if not body:
+            continue
+        if chunk[0].startswith("## "):
+            heading = chunk[0][3:].strip()
+            m = _ADDENDA_KEY_RE.match(heading)
+        else:
+            heading, m = "(preamble)", None
+            if not re.search(r"\S", "\n".join(l for l in chunk if not l.startswith("# "))):
+                continue  # only a title line
+        key = m.group(1).lower() if m else "start"
+        if key == skill:
+            out.append({"heading": heading, "keyed": bool(m), "body": body})
+    return out
+
+
+def cmd_addenda(args):
+    skill = args.for_skill
+    if skill not in SKILL_NAMES:
+        fail(f"Unknown skill '{skill}'. Use one of: {', '.join(SKILL_NAMES)}.")
+    sections = addenda_sections(skill)
+    path = _profile_file("runbook_addenda")
+    missing = bool(path) and not path.exists()
+    if OUTPUT_FORMAT == "json":
+        print(json.dumps({"skill": skill, "configured": bool(path), "missing": missing,
+                          "sections": sections}))
+        return
+    if missing:
+        print(f"runbook addenda: \u2717 (not found: {path})")
+        return
+    if not sections:
+        print(f"No profile addenda for {skill}.")
+        return
+    print(f"Profile addenda for {skill} ({len(sections)} section{'s' if len(sections) != 1 else ''}); "
+          f"these override the skill's matching steps:\n")
+    print("\n\n".join(s["body"] for s in sections))
+
+
+def authorization_text():
+    """(text, source) — the profile's authorization file, else the default."""
+    path = _profile_file("authorization")
+    if path and path.exists():
+        text = path.read_text().strip()
+        if text:
+            return text, str(path)
+    return DEFAULT_AUTHORIZATION, "default"
+
+
+def cmd_authorization(args):
+    text, source = authorization_text()
+    if OUTPUT_FORMAT == "json":
+        print(json.dumps({"source": source, "text": text}))
+        return
+    print(text)
+
+
 def cmd_status(args):
     session = load_session()
     config = load_config()
@@ -3241,6 +3530,24 @@ def build_parser():
 
     sub.add_parser("undo", help="Undo the last state change.")
 
+    p_session = sub.add_parser("session", help="Close or reopen today's session (#82).")
+    session_sub = p_session.add_subparsers(dest="session_action", required=True)
+    p_close = session_sub.add_parser(
+        "close", help="Close today's session. Refuses unless the day's handoff is written.")
+    p_close.add_argument("--without-handoff", action="store_true",
+                         help="Close with no handoff (needs --reason).")
+    p_close.add_argument("--reason", type=str, default=None, help="Why (required with --without-handoff).")
+    p_reopen = session_sub.add_parser(
+        "reopen", help="Reopen a closed session to log post-close work.")
+    p_reopen.add_argument("--reason", type=str, default=None, help="What the post-close work is (required).")
+
+    p_addenda = sub.add_parser("addenda", help="Print the profile addenda sections for a skill (#82).")
+    p_addenda.add_argument("--for", dest="for_skill", required=True,
+                           help="Skill: start, eod, pickup, dispatch, pre-plan or horizon.")
+
+    sub.add_parser("authorization",
+                   help="Print the profile's authorization scope (what needs its own yes), or the default (#82).")
+
     p_history = sub.add_parser("history", help="Query tasks from past sessions.")
     p_history.add_argument("--days", type=int, default=7, help="Number of past days (default: 7).")
     p_history.add_argument("--ref", type=str, default=None, help="Filter by ref (case-insensitive substring).")
@@ -3346,6 +3653,9 @@ DISPATCH = {
     "reckon": cmd_reckon,
     "status": cmd_status,
     "undo": cmd_undo,
+    "session": cmd_session,
+    "addenda": cmd_addenda,
+    "authorization": cmd_authorization,
     "history": cmd_history,
     "profile": cmd_profile,
     "decision": cmd_decision,
@@ -3463,6 +3773,9 @@ def main():
                 profile_name = None
             if profile_name:
                 print(f"(profile: {profile_name} — {resolved_via_human(source)})")
+
+    if args.command not in ("profile", "decision"):
+        apply_profile_timezone()
 
     handler = DISPATCH.get(args.command)
     if handler:

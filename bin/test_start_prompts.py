@@ -159,16 +159,17 @@ def test_methodology_pointer_in_session_hook():
     directive was strengthened from "consult" to "apply + cite at least
     one principle by name."
     """
-    hook_path = REPO / "bin" / "session-hook.sh"
-    text = _read(hook_path)
+    # Since #82 the text lives in session_context.py (the hook calls it), and
+    # the blanket "cite at least one principle in every recommendation"
+    # demand is gone: four weeks of use showed it followed in under 1% of
+    # replies while repeating on every resume and compaction.
+    text = _read(REPO / "bin" / "session_context.py")
     _assert_contains(text, "methodology.md",
                      "session-hook: methodology.md pointer")
     _assert_contains(text, "work-shape questions",
                      "session-hook: work-shape trigger phrase")
     _assert_contains(text, "apply its seven principles by name",
                      "session-hook: apply-not-just-consult directive")
-    _assert_contains(text, "Cite at least one principle",
-                     "session-hook: cite-principle instruction")
     _assert_contains(text, "if you deviate from a principle, name it",
                      "session-hook: deviation-must-be-named rule")
 

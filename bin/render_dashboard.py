@@ -280,6 +280,33 @@ def load_config():
         return {}
 
 
+def apply_profile_timezone(config=None):
+    """Use the profile's timezone for every datetime.now() here (#82).
+
+    Task times are stored in the profile timezone; comparing them with
+    the system clock skewed the dashboard when the two differ.
+    """
+    tz_name = (config if config is not None else load_config()).get("timezone")
+    if not tz_name:
+        # Same user.json fallback as the CLI's load_config().
+        try:
+            root = Path(os.environ.get("WPL_ROOT") or (Path.home() / ".workplanner"))
+            tz_name = json.loads((root / "user.json").read_text()).get("timezone")
+        except (OSError, ValueError, AttributeError):
+            tz_name = None
+    if not tz_name:
+        return
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(tz_name)
+    except Exception:
+        return
+    os.environ["TZ"] = tz_name
+    import time as _time
+    if hasattr(_time, "tzset"):
+        _time.tzset()
+
+
 # ── Events / Alerts ──────────────────────────────────────────────────
 
 
@@ -848,6 +875,7 @@ def main():
         sys.exit(0)
 
     config = load_config()
+    apply_profile_timezone(config)
 
     try:
         with open(paths["session"]) as f:
