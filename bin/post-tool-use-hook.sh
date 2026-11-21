@@ -2,12 +2,11 @@
 # Workplanner PostToolUse hook.
 #
 # Secondary feedback channel (per Q2 / Stream A): when the LLM invokes a
-# Bash tool whose command is a `wpl` call, re-inject the current session
-# state into the next turn's context. The primary channel is the full
-# compact task list on stdout of every mutating command; this hook is
-# defense-in-depth for cases where the assistant's model of state drifts
-# across turns anyway (long outputs, compaction, or third-party tools
-# elbowing the stdout off the visible context).
+# Bash tool whose command is a `wpl` call, inject a short state anchor
+# (counts and current task) into the next turn's context. The primary
+# channel is the full compact task list on stdout of every wpl command, so
+# the hook doesn't repeat it (issue #65); it only keeps the headline state
+# in view when long outputs or compaction push the list out of sight.
 #
 # Protocol: stdin carries hook JSON with tool_name and tool_input.command.
 # Output: JSON on stdout shaped per Claude Code hook spec:
@@ -28,18 +27,31 @@ cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 [ "$tool_name" = "Bash" ] || exit 0
 [ -n "$cmd" ] || exit 0
 
-# Recognize either a bare `wpl ...` call or the explicit wrapper path.
-# Match conservatively: first token is `wpl` or ends with `/wpl`,
-# or the command contains the wpl wrapper path substring.
-first_token=$(printf '%s' "$cmd" | awk '{print $1}')
-is_wpl=0
-case "$first_token" in
-    wpl|*/wpl) is_wpl=1 ;;
-esac
-case "$cmd" in
-    */.workplanner/bin/wpl*) is_wpl=1 ;;
-    */workplanner/bin/transition.py*) is_wpl=1 ;;
-esac
+# Recognize a wpl call: a command segment (split on && || ; |) whose first
+# word, after any VAR=value assignments, is `wpl`, `*/wpl`, or
+# `python3 .../transition.py`. Arguments that merely mention the wrapper
+# path (a commit message, an issue body, a sed over transition.py) don't
+# count (issue #65).
+is_wpl=$(printf '%s' "$cmd" | python3 -c '
+import re, shlex, sys
+cmd = sys.stdin.read()
+for seg in re.split(r"&&|\|\||;|\||\n", cmd):
+    try:
+        words = shlex.split(seg)
+    except ValueError:
+        words = seg.split()
+    while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+        words.pop(0)
+    if not words:
+        continue
+    w0 = words[0]
+    if w0 == "wpl" or w0.endswith("/wpl"):
+        print(1); break
+    if re.match(r"^(.*/)?python3?$", w0) and len(words) > 1 and words[1].endswith("/transition.py"):
+        print(1); break
+else:
+    print(0)
+' 2>/dev/null || echo 0)
 [ "$is_wpl" = "1" ] || exit 0
 
 # Resolve the wpl wrapper. Prefer the per-user wrapper path; fall back
@@ -67,7 +79,7 @@ try:
 except Exception:
     sys.exit(0)
 
-lines = ["Workplanner session state (post-wpl injection):"]
+lines = ["Workplanner session state (post-wpl injection; full list is in the command output):"]
 counts = s.get("counts", {})
 dropped = counts.get("dropped", 0)
 lines.append(
@@ -93,28 +105,9 @@ if cur:
 else:
     lines.append("  Current: (none)")
 
-glyphs = {
-    "in_progress": "▶",
-    "done":        "✓",
-    "blocked":     "⚠",
-    "deferred":    "↷",
-    "dropped":     "✗",
-    "pending":     " ",
-}
-
-tasks = s.get("tasks") or []
-# Cap at 15 tasks to stay well under ~500 tokens.
-if tasks:
-    lines.append("  Tasks:")
-    for t in tasks[:15]:
-        g = glyphs.get(t.get("status", "pending"), " ")
-        lines.append(
-            "    [{}] {}  {}  \"{}\"".format(
-                g, t.get("tid"), t.get("uid"), t.get("title")
-            )
-        )
-    if len(tasks) > 15:
-        lines.append("    ... {} more".format(len(tasks) - 15))
+# The output of the wpl command already carries the full task list
+# (post-mutation feedback loop), so it is not repeated here (issue #65). Keep
+# only the counts and current-task anchor above.
 
 print("\n".join(lines))
 ' 2>/dev/null || true)

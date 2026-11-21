@@ -2140,6 +2140,7 @@ def cmd_backlog(args):
 
 
 def _backlog_add(args):
+    est = args.est if args.est is not None else 30  # #69: the default applies only when adding
     title = " ".join(args.title) if args.title else None
     if not title:
         fail("Title is required. Usage: backlog \"task title\" [--est N] [--target DATE]")
@@ -2171,7 +2172,7 @@ def _backlog_add(args):
     item = {
         "uid": generate_uid(),
         "title": title,
-        "estimate_min": args.est,
+        "estimate_min": est,
         "source": "manual",
         "status": "backlog",
         "ref": args.ref,
@@ -2192,7 +2193,7 @@ def _backlog_add(args):
     if bl_deadline:
         date_info.append(f"deadline: {bl_deadline}")
     date_str = f" ({', '.join(date_info)})" if date_info else ""
-    human = f"+ backlog: \"{title}\" (~{args.est}m){date_str}. [backlog: {len(backlog['items'])} items]"
+    human = f"+ backlog: \"{title}\" (~{est}m){date_str}. [backlog: {len(backlog['items'])} items]"
     # backlog --add does not mutate session; re-load session so the full task list
     # reflects the unchanged plan (LLM feedback loop per Stream A).
     try:
@@ -2423,7 +2424,7 @@ def _backlog_edit(args):
     if args.notes:
         found["notes"] = args.notes
         changed.append("notes updated")
-    if args.est:
+    if args.est is not None:
         found["estimate_min"] = args.est
         changed.append(f"est: {args.est}m")
 
@@ -3160,7 +3161,7 @@ def build_parser():
 
     p_backlog = sub.add_parser("backlog", help="Manage the backlog (future/long-term tasks).")
     p_backlog.add_argument("title", nargs="*", help="Task title (for adding new items).")
-    p_backlog.add_argument("--est", type=int, default=30, help="Estimate in minutes (default: 30).")
+    p_backlog.add_argument("--est", type=int, default=None, help="Estimate in minutes (default when adding: 30; unchanged when editing).")
     p_backlog.add_argument("--target", type=str, default=None, help="Target date to surface (YYYY-MM-DD or relative).")
     p_backlog.add_argument("--not-before", type=str, default=None, help="Don't surface until this date.")
     p_backlog.add_argument("--deadline", type=str, default=None, help="Hard deadline.")

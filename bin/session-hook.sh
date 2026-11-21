@@ -103,7 +103,7 @@ if other_dispatched:
     items = ', '.join(f't{i+1}' for i, _ in other_dispatched)
     lines.append(f'  Dispatched (other sessions): {items}')
 
-lines.append('  Use wpl to manage tasks (e.g., wpl done, wpl status) — add ~/.workplanner/bin to PATH')
+lines.append('  Use \`wpl\` (e.g. wpl done, wpl status); if it is not found, call ~/.workplanner/bin/wpl.')
 
 # Disposition line, kept separate by a blank to avoid being skimmed as more state.
 plugin_root = '$CLAUDE_PLUGIN_ROOT'
