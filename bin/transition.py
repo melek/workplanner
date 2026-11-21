@@ -1682,7 +1682,32 @@ def cmd_defer(args):
                   config=load_config(), human_line=human)
 
 
+def _read_text_source(source, flag):
+    """Read a text value from a file path, or stdin for "-" (issue #66).
+
+    Long notes passed as shell arguments are fragile: quotes, backticks and
+    `$` can break the command or silently change the text. A file (or a
+    heredoc with a quoted delimiter) sidesteps quoting. One trailing
+    newline is dropped, the rest is kept verbatim.
+    """
+    try:
+        text = sys.stdin.read() if source == "-" else Path(source).read_text()
+    except OSError as e:
+        fail(f"Can't read {flag} {source}: {e}")
+    return text[:-1] if text.endswith("\n") else text
+
+
+def _resolve_notes_files(args):
+    """Fold --notes-file / --append-notes-file into --notes / --append-notes."""
+    for file_attr, attr, flag in (("notes_file", "notes", "--notes-file"),
+                                  ("append_notes_file", "append_notes", "--append-notes-file")):
+        source = getattr(args, file_attr, None)
+        if source is not None:
+            setattr(args, attr, _read_text_source(source, flag))
+
+
 def cmd_add(args):
+    _resolve_notes_files(args)
     session = load_session()
     title = " ".join(args.title)
     if not title:
@@ -1940,6 +1965,7 @@ def cmd_edit(args):
     is the common case. Titles go through `rename`, which keeps
     `original_title`.
     """
+    _resolve_notes_files(args)
     session = load_session()
     target, task = parse_task_target(args.target, session)
 
@@ -1973,8 +1999,8 @@ def cmd_edit(args):
         changed.append("est")
     changed += _edit_times(task, target, args)
     if not changed:
-        fail("Nothing to edit. Use --notes, --append-notes, --url, --ref, --est, "
-             "--started, --finished or --actual.")
+        fail("Nothing to edit. Use --notes, --append-notes, --notes-file, --append-notes-file, "
+             "--url, --ref, --est, --started, --finished or --actual.")
 
     save_session(session)
     render()
@@ -3087,7 +3113,10 @@ def build_parser():
     p_add.add_argument("--source", type=str, default=None, help="Source (default: manual).")
     p_add.add_argument("--ref", type=str, default=None, help="Issue reference.")
     p_add.add_argument("--url", type=str, default=None, help="Issue URL.")
-    p_add.add_argument("--notes", type=str, default=None, help="Free-text notes.")
+    add_notes = p_add.add_mutually_exclusive_group()
+    add_notes.add_argument("--notes", type=str, default=None, help="Free-text notes.")
+    add_notes.add_argument("--notes-file", dest="notes_file", type=str, default=None, metavar="PATH|-",
+                           help="Read the notes from a file, or stdin for '-' (no shell quoting).")
     p_add.add_argument("--parent", type=str, default=None, help="Parent task (t3, index, or uid). Creates a sub-task.")
 
     p_remove = sub.add_parser("remove", help="Remove a task entirely.")
@@ -3127,6 +3156,11 @@ def build_parser():
     notes_group.add_argument("--notes", type=str, default=None, help="Replace the notes.")
     notes_group.add_argument("--append-notes", dest="append_notes", type=str, default=None,
                              help="Append to the notes, separated by ' | '.")
+    notes_group.add_argument("--notes-file", dest="notes_file", type=str, default=None, metavar="PATH|-",
+                             help="Replace the notes with a file's contents, or stdin for '-'.")
+    notes_group.add_argument("--append-notes-file", dest="append_notes_file", type=str, default=None,
+                             metavar="PATH|-",
+                             help="Append a file's contents (or stdin for '-') to the notes.")
     p_edit.add_argument("--url", type=str, default=None, help="Set the URL.")
     p_edit.add_argument("--ref", type=str, default=None, help="Set the issue reference.")
     p_edit.add_argument("--est", type=int, default=None, help="Set the estimate in minutes.")

@@ -25,7 +25,7 @@ Four sequential steps. Unlike morning assembly, these are not checkpointed — t
 
 ## Step 2: Local Handoff Doc (mandatory)
 
-1. Write (or update) today's handoff file at `~/.workplanner/profiles/<resolved-profile-name>/handoffs/YYYY-MM-DD.md` using `bin/handoff.py write`.
+1. Write (or update) today's handoff file at `~/.workplanner/profiles/<resolved-profile-name>/handoffs/YYYY-MM-DD.md` using `bin/handoff.py write`. The sections go in as one JSON object (`--from-json -` with a quoted heredoc, or a file path) rather than shell arguments, so markdown with quotes, backticks and `$` can't break or alter the write (issue #66).
 2. The file uses a merge-by-section format so concurrent sessions (dispatched tmux panes, multiple Claude instances) each contribute to their own `### <session-id>` sub-section without clobbering others.
 3. Sections written: `Session trajectory` (including dropped tasks with their `drop_reason`), `Deferred with reasons` (each deferred/blocked task with its `defer_reason`), `Open questions`, `Context for tomorrow`.
 4. Session identifier is auto-detected: `$CLAUDE_SESSION_ID` → `$TMUX_PANE` → process-start-hash fallback.

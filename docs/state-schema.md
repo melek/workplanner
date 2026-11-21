@@ -232,6 +232,7 @@ The file is read and written through `bin/handoff.py`. Skills never edit it dire
 
 ```bash
 python3 bin/handoff.py write --trajectory "..." --deferred-json '[{...}]' --open-questions "..." --context "..."
+python3 bin/handoff.py write --replace --from-json PATH|-   # same sections as one JSON object: {trajectory, deferred, open_questions, context}
 python3 bin/handoff.py read [--date YYYY-MM-DD]    # prints JSON with {path, date, exists, sections, deferred, raw}
 python3 bin/handoff.py path [--date YYYY-MM-DD]    # prints the resolved path
 python3 bin/handoff.py pending                     # unreviewed handoffs before today, oldest first: {reviewed_through, count, handoffs}
