@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Long text from a file or stdin** (issue #66). `handoff.py write --from-json PATH|-` takes the sections as one JSON object (`{trajectory, deferred, open_questions, context}`; absent or null keeps a section, `""` clears it, `--replace` rewrites). `wpl add --notes-file`, and `wpl edit --notes-file` / `--append-notes-file`, read notes from a file or stdin. Quotes, backticks and `$` in long markdown no longer need shell quoting, which could break a command or silently change the text. `/eod` and stale-session recovery now write the handoff this way. Regression suite: `bin/test_issue_66.py`.
+
 ### Fixed
 
 - **Post-wpl hook no longer repeats the task list, and fires only on real `wpl` calls** (issue #65). The command's own output already carries the list, so the hook now injects just the counts and current task. A command triggers it only when one of its segments (split on `&&`, `||`, `;`, `|`) starts with `wpl`, `*/wpl` or `python3 …/transition.py`; arguments that merely mention those paths (an issue body, a `sed` over `transition.py`) no longer do. Matching now tokenizes like a shell (`bin/hook_is_wpl.py`), so separators inside quoted strings and heredoc bodies, such as a commit message line `object; wpl add …`, don't trigger it.

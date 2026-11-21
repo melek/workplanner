@@ -260,11 +260,16 @@ Triggered when `current-session.json` exists but `date` ≠ today.
        --session-id "stale-recovery-$STALE_DATE" \
        --date "$STALE_DATE" \
        --replace \
-       --trajectory "<done / dropped / deferred / blocked summary + notes + drop reasons + scope decisions>" \
-       --deferred-json '[{"title":"...","uid":"...","reason":"..."}]' \
-       --open-questions "<open threads noted in the session>" \
-       --context "<any pointers for today that the stale session implies>"
+       --from-json - <<'HANDOFF_JSON'
+     {
+       "trajectory": "<done / dropped / deferred / blocked summary + notes + drop reasons + scope decisions>",
+       "deferred": [{"title": "...", "uid": "...", "reason": "..."}],
+       "open_questions": "<open threads noted in the session>",
+       "context": "<any pointers for today that the stale session implies>"
+     }
+     HANDOFF_JSON
      ```
+     Pass the sections as JSON on stdin with a quoted heredoc delimiter, not as shell arguments, so quotes, backticks and `$` in the markdown stay literal (issue #66).
      Draft each section from the stale session JSON (done / dropped / deferred / blocked counts + titles, any `drop_reason`s, any `defer_reason`s, task notes, scope decisions). When the session JSON alone is thin, augment with:
      - Linear `completedAt` / recent-updates for the session's date window (for tasks that moved state after the session last wrote).
      - Relevant repo state — new directories, uncommitted files — if a task in the stale session was clearly mid-work.

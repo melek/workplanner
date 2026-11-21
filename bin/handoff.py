@@ -22,6 +22,12 @@ CLI surface (used by skills):
         --open-questions "..." \
         --context "..."
 
+    # Same write with the sections in a JSON file (or stdin), no shell quoting
+    python3 handoff.py write --replace --from-json /tmp/handoff.json
+    python3 handoff.py write --from-json - <<'EOF'
+    {"context": "notes with `backticks`, $vars and 'quotes' stay literal"}
+    EOF
+
     # Read today's handoff (or any specific date), print a JSON blob
     python3 handoff.py read [--date YYYY-MM-DD]
 
@@ -490,7 +496,66 @@ def _normalise_body(body):
 # ── CLI ─────────────────────────────────────────────────────────────
 
 
+FROM_JSON_KEYS = {"trajectory", "deferred", "open_questions", "context"}
+
+
+def _load_from_json(source):
+    """Read the --from-json payload from a path, or stdin for "-" (issue #66).
+
+    One JSON object whose keys map to the sections. Absent or null means
+    "not part of this write" (kept, unless --replace); "" clears.
+    `deferred` is a list of {title, uid, reason} dicts or a markdown string.
+    """
+    try:
+        text = sys.stdin.read() if source == "-" else Path(source).read_text()
+    except OSError as e:
+        print(f"error: can't read --from-json {source}: {e}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"error: --from-json is not valid JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print("error: --from-json must be a JSON object", file=sys.stderr)
+        sys.exit(1)
+    unknown = set(data) - FROM_JSON_KEYS
+    if unknown:
+        print(f"error: --from-json has unknown keys: {', '.join(sorted(unknown))} "
+              f"(expected {', '.join(sorted(FROM_JSON_KEYS))})", file=sys.stderr)
+        sys.exit(1)
+    for key in ("trajectory", "open_questions", "context"):
+        if data.get(key) is not None and not isinstance(data[key], str):
+            print(f"error: --from-json {key} must be a string or null", file=sys.stderr)
+            sys.exit(1)
+    if data.get("deferred") is not None and not isinstance(data["deferred"], (list, str)):
+        print("error: --from-json deferred must be a list, a string or null", file=sys.stderr)
+        sys.exit(1)
+    return data
+
+
 def _cmd_write(args):
+    if args.from_json is not None:
+        flags = [f for f, v in (("--trajectory", args.trajectory), ("--deferred", args.deferred),
+                                ("--deferred-json", args.deferred_json),
+                                ("--open-questions", args.open_questions),
+                                ("--context", args.context)) if v is not None]
+        if flags:
+            print(f"error: --from-json can't be combined with {', '.join(flags)}", file=sys.stderr)
+            sys.exit(1)
+        data = _load_from_json(args.from_json)
+        path = write_handoff(
+            session_id_str=args.session_id or session_id(),
+            trajectory=data.get("trajectory"),
+            deferred=data.get("deferred"),
+            open_questions=data.get("open_questions"),
+            context=data.get("context"),
+            target_date=args.date,
+            replace=args.replace,
+        )
+        print(str(path))
+        return
+
     deferred = None
     if args.deferred_json:
         try:
@@ -566,6 +631,10 @@ def main():
     w.add_argument("--open-questions", default=None, help="Open questions markdown body.")
     w.add_argument("--context", default=None, help="Context-for-tomorrow markdown body.")
     w.add_argument("--date", default=None, help="ISO date (YYYY-MM-DD). Default: today in profile timezone.")
+    w.add_argument("--from-json", default=None, metavar="PATH|-",
+                   help="Read the sections from one JSON object in a file, or stdin for '-': "
+                        "{trajectory, deferred, open_questions, context}. Avoids shell quoting "
+                        "of long markdown. Can't be combined with the section flags.")
     w.add_argument("--replace", action="store_true",
                    help="Full rewrite of this session's contribution: sections not passed are removed. "
                         "Without it, sections not passed are kept, and an explicit empty value clears one.")

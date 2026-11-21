@@ -101,16 +101,20 @@ Tomorrow's `/start` Step 0.25 reads this file to carry decisions, defer reasons,
    {"title": "<task title>", "uid": "<task.uid>", "reason": "<task.defer_reason OR parsed from notes>"}
    ```
 
-3. Pass everything to `handoff.py write`:
+3. Pass everything to `handoff.py write` as one JSON object on stdin (`--from-json -`), not as shell arguments. Handoff markdown is full of quotes, backticks, links and `$`, and quoting it per flag is fragile (issue #66). Use a heredoc with a **quoted** delimiter, which disables expansion:
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/bin/handoff.py" write --replace \
-     --trajectory "$TRAJECTORY_MARKDOWN" \
-     --deferred-json "$DEFERRED_JSON" \
-     --open-questions "$OPEN_Q_MARKDOWN" \
-     --context "$CONTEXT_MARKDOWN"
+   python3 "${CLAUDE_PLUGIN_ROOT}/bin/handoff.py" write --replace --from-json - <<'HANDOFF_JSON'
+   {
+     "trajectory": "<markdown>",
+     "deferred": [{"title": "...", "uid": "...", "reason": "..."}],
+     "open_questions": "<markdown>",
+     "context": "<markdown>"
+   }
+   HANDOFF_JSON
    ```
+   The content only has to be valid JSON (escape `"` and newlines as `\n`), not shell-safe. Writing the object to a temp file and passing its path works too. The per-section flags (`--trajectory`, `--deferred-json`, `--open-questions`, `--context`) still exist for short values, but can't be combined with `--from-json`.
 
-   `--replace` makes this a full rewrite of this session's contribution: a flag you leave out (because this session has nothing to say there) removes that sub-section, so a re-run clears a section that became empty. Without `--replace`, `handoff.py write` keeps sections you don't pass — that is for incremental writes during the day, not for EOD. Write all sections in this one call. Do NOT pass an explicit `--session-id`; the library picks one from `$CLAUDE_SESSION_ID` → `$TMUX_PANE` → process-start-hash fallback.
+   `--replace` makes this a full rewrite of this session's contribution: a key you leave out (because this session has nothing to say there) removes that sub-section, so a re-run clears a section that became empty. Without `--replace`, `handoff.py write` keeps sections you don't pass — that is for incremental writes during the day, not for EOD. Write all sections in this one call. Do NOT pass an explicit `--session-id`; the library picks one from `$CLAUDE_SESSION_ID` → `$TMUX_PANE` → process-start-hash fallback.
 
 **Idempotent within a session:** If `/eod` is re-run (e.g., after a fix-up), the `--replace` write rewrites *this session's* sub-sections only. Other sessions' contributions are preserved.
 
